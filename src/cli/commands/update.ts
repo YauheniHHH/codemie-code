@@ -7,7 +7,7 @@ import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
-import { compareVersions, isValidSemanticVersion } from '../../utils/version-utils.js';
+import { compareVersions, isValidSemanticVersion, extractVersion } from '../../utils/version-utils.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -28,16 +28,6 @@ interface UpdateCheckResult {
   hasUpdate: boolean;
   /** npm package name for installation */
   npmPackage: string;
-}
-
-/**
- * Extract semver version from a string that may contain extra text
- * e.g., "2.0.76 (Claude Code)" -> "2.0.76"
- *       "v1.2.3-beta" -> "1.2.3"
- */
-function extractVersion(versionString: string): string | null {
-  const match = versionString.match(/v?(\d+\.\d+\.\d+)/);
-  return match ? match[1] : null;
 }
 
 /**
