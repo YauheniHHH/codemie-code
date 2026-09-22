@@ -4,6 +4,7 @@ import type {
   ResumeOwnershipResult,
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { resolveSupportedVersion } from '../../core/version-resolution.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import { resolveClaudeModel, listRouterModelIds, buildModelLabelMap, buildModelPickerOptions, type ClaudeModelTier } from './claude.models.js';
 import { writeConfigToTempFile } from '../../core/temp-config.js';
@@ -750,13 +751,18 @@ export class ClaudePlugin extends BaseAgentAdapter {
     // Resolve 'supported' to actual version from metadata
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      if (!metadata.supportedVersion) {
+      const resolved = await resolveSupportedVersion({
+        agentName: metadata.name,
+        npmPackage: metadata.npmPackage,
+        fallbackSupportedVersion: metadata.supportedVersion,
+      });
+      if (!resolved) {
         throw new AgentInstallationError(
           metadata.name,
           'No supported version defined in metadata',
         );
       }
-      resolvedVersion = metadata.supportedVersion;
+      resolvedVersion = resolved;
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,
