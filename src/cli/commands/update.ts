@@ -8,8 +8,7 @@ import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
 import { compareVersions, isValidSemanticVersion, extractVersion } from '../../utils/version-utils.js';
-import { isLiveTrackedAgent, resolveSupportedVersion } from '../../agents/core/version-resolution.js';
-import { clearVersionCache } from '../../utils/version-cache.js';
+import { isLiveTrackedAgent, isVersionChecksEnabled, resolveSupportedVersion } from '../../agents/core/version-resolution.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -35,7 +34,10 @@ interface UpdateCheckResult {
 /**
  * Check a single agent for available updates
  */
-async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResult | null> {
+async function checkAgentForUpdate(
+  agent: AgentAdapter,
+  options: { forceRefresh?: boolean } = {}
+): Promise<UpdateCheckResult | null> {
   // Check if installed
   const installed = await agent.isInstalled();
   if (!installed) {
@@ -89,6 +91,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
         agentName: agent.name,
         npmPackage,
         fallbackSupportedVersion: agent.metadata.supportedVersion,
+        forceRefresh: options.forceRefresh,
       })
     : await npm.getLatestVersion(npmPackage);
   if (!latestVersion) {
@@ -121,13 +124,15 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
 /**
  * Check all installed agents for updates
  */
-async function checkAllAgentsForUpdates(): Promise<UpdateCheckResult[]> {
+async function checkAllAgentsForUpdates(
+  options: { forceRefresh?: boolean } = {}
+): Promise<UpdateCheckResult[]> {
   const agents = AgentRegistry.getManageableAgents();
   const results: UpdateCheckResult[] = [];
 
   // Check all agents in parallel
   const checks = await Promise.all(
-    agents.map(agent => checkAgentForUpdate(agent))
+    agents.map(agent => checkAgentForUpdate(agent, options))
   );
 
   for (const result of checks) {
@@ -228,8 +233,15 @@ export function createUpdateCommand(): Command {
           console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
         }
 
-        if (options?.forceRefresh) {
-          await clearVersionCache();
+        // Force-refresh bypasses only the 24h TTL for the package(s) actually being checked
+        // below (scoped per-agent via `resolveSupportedVersion`'s `forceRefresh`) — it never
+        // wipes the shared cache file, and it's a no-op when version checks are disabled.
+        const versionChecksEnabled = await isVersionChecksEnabled();
+        const forceRefresh = Boolean(options?.forceRefresh) && versionChecksEnabled;
+        if (options?.forceRefresh && !versionChecksEnabled) {
+          console.log(
+            chalk.dim('Version checks are disabled (versionChecks.enabled=false) — --force-refresh is a no-op.\n')
+          );
         }
 
         const checkOnly = options?.check ?? false;
@@ -259,7 +271,7 @@ export function createUpdateCommand(): Command {
 
           const spinner = ora(`Checking ${agent.displayName} for updates...`).start();
 
-          const result = await checkAgentForUpdate(agent);
+          const result = await checkAgentForUpdate(agent, { forceRefresh });
 
           if (!result) {
             spinner.warn(`Could not check ${agent.displayName} for updates`);
@@ -267,7 +279,12 @@ export function createUpdateCommand(): Command {
           }
 
           if (!result.hasUpdate) {
-            spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
+            // Live-tracked agents resolve against a cached npm lookup rather than an absolute
+            // "latest", so make that distinction explicit instead of a bare "up to date".
+            const upToDateMessage = isLiveTrackedAgent(agent.name)
+              ? `${agent.displayName} is already up to date — no newer version available (${result.currentVersion})`
+              : `${agent.displayName} is already up to date (${result.currentVersion})`;
+            spinner.succeed(upToDateMessage);
             return;
           }
 
@@ -298,7 +315,7 @@ export function createUpdateCommand(): Command {
         // Case 2: Check/update all agents
         const spinner = ora('Checking for updates...').start();
 
-        const results = await checkAllAgentsForUpdates();
+        const results = await checkAllAgentsForUpdates({ forceRefresh });
 
         if (results.length === 0) {
           spinner.info('No updatable agents installed');
