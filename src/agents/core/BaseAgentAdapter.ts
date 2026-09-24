@@ -400,8 +400,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
   /**
    * Emit a one-time notice when the installed version differs from the
-   * recommended `metadata.supportedVersion`, then record the marker so later
-   * launches stay silent until the recommendation itself moves.
+   * latest tracked `metadata.supportedVersion`, then record the marker so later
+   * launches stay silent until the tracked version itself moves.
    *
    * Never prompts, never blocks, never throws — a failure to read or write the
    * marker store must not stop the agent from launching.
@@ -437,7 +437,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       const codemieVersion = (await getCurrentCliVersion()) ?? 'unknown';
       const notice =
-        `CodeMie recommends ${this.displayName} v${supportedVersion}; ` +
+        `CodeMie is tracking ${this.displayName} v${supportedVersion}; ` +
         `you are running v${installedVersion} (CodeMie v${codemieVersion}).`;
 
       logger.warn(notice, {
@@ -451,9 +451,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // the only channel there.
       if (!this.metadata.silentMode && !isNonInteractiveEnvironment()) {
         console.error();
-        console.error(chalk.yellow(`⚠  ${notice}`));
-        console.error(chalk.white('   Continuing. To switch to the recommended version, run:'));
-        console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
+        console.error(chalk.yellow(`⚠ ${notice}`));
+        console.error(chalk.white('  Continuing. To switch to the tracked version, run:'));
+        console.error(chalk.blueBright(`    codemie install ${this.name} --supported`));
         console.error();
       }
 
@@ -481,7 +481,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * This is the only remaining hard gate: `minimumSupportedVersion` marks
    * versions with known protocol breaks, where launching produces corrupted
    * output rather than a degraded experience. Everything above the minimum is
-   * a recommendation handled by {@link warnOnceIfUntested}.
+   * tracked, non-blocking guidance handled by {@link warnOnceIfUntested}.
    */
   private async blockIfBelowMinimum(): Promise<void> {
     if (!this.metadata.supportedVersion || !this.metadata.minimumSupportedVersion) {
@@ -514,14 +514,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.error();
     console.error(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
     console.error(chalk.red(`  Minimum required version: v${minimumDisplay}`));
-    console.error(
-      chalk.white(`  Recommended version:      v${compat.supportedVersion} `) +
-      chalk.green('(recommended)')
-    );
+    console.error(chalk.white(`  Latest tracked version:   v${compat.supportedVersion}`));
     console.error();
     console.error(chalk.white('  This version is known to be incompatible with CodeMie.'));
     console.error(chalk.white('  Upgrade with:'));
-    console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
+    console.error(chalk.blueBright(`    codemie install ${this.name} --supported`));
     console.error();
     process.exit(1);
   }
