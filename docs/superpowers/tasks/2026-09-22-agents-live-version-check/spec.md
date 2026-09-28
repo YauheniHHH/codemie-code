@@ -53,6 +53,8 @@ TTL. On npm failure (timeout, network, unparsable output) it returns the cached 
 entry is still inside its TTL, else `null` — an expired entry is never presented as current. Every
 failure is logged with `logger.warn` (log file only). Failures are not cached, so the next call
 retries. Writes are atomic (temp file + rename); a failed write still returns the fetched value.
+Unparsable output means anything other than a version string. Malformed entries in the cache file
+are ignored, and the next successful write replaces them.
 
 ### 2. `supportedVersion` becomes live-tracked, uniformly, for an explicit allowlist
 
@@ -112,7 +114,9 @@ When disabled, allowlisted agents resolve as not live, with no network calls fro
 
 `codemie doctor` and `codemie update`'s force-refresh bypasses only the 24h TTL, not the toggle —
 with the toggle off, force-refresh is a no-op. Codex's and Gemini's own self-update suppression is
-also skipped while checks are off.
+also skipped while checks are off. A value written earlier is left in place when checks are turned
+off: CodeMie can't tell its value from one the user set. This is documented in
+`docs/CONFIGURATION.md`.
 
 ### 4. Notice-dedup interaction
 
@@ -123,12 +127,15 @@ logic in `version-warnings.ts` naturally stays silent — no code change needed 
 
 ### 5. UI copy
 
-Reword the two "verified" framings to "newer version available":
+Once the number follows npm rather than a hand-tested pin, every string that says CodeMie "tested",
+"verified" or "recommends" a version is inaccurate. All of them use "tracking" framing instead
+(decided during implementation, superseding the original two-string scope):
 
-- `update.ts:289` — Claude's already-up-to-date message.
-- `setup.ts:783` — `` `CodeMie has only tested and verified v...` ``.
-
-`AgentsCheck.ts:37`'s existing "CodeMie recommends v..." wording already fits and is unchanged.
+- `update.ts` — up-to-date message: "no newer version available".
+- `setup.ts` — "ahead of the tracked v...".
+- `AgentsCheck.ts` — "CodeMie is tracking v...".
+- The launch notice ("CodeMie is tracking X vN; you are running vM"), the `install --supported`
+  option help, and the two related `tips.json` entries.
 
 ## Acceptance Criteria
 
@@ -146,10 +153,12 @@ Reword the two "verified" framings to "newer version available":
   `codemie doctor` and `codemie update` identically. A global `false` holds in projects that have
   their own `workspace` block, and the env var works without an active profile.
 - An invalid or unrecognized stored value for the toggle resolves to "checks enabled."
-- `codemie doctor` and `codemie update` can force a cache refresh, bypassing only the 24h TTL.
-- The two named "verified"-framing UI strings are reworded. The only other copy changes are the
-  checks-disabled notes in `codemie update` / `codemie install --supported`, and hiding the "Latest
-  tracked version" line of the below-minimum message when the version is unknown.
+- `codemie doctor --refresh-versions` and `codemie update --force-refresh` re-check each package
+  against npm, bypassing only the 24h TTL; a failed lookup keeps that package's existing entry.
+- No user-facing string claims CodeMie "tested", "verified" or "recommends" a version; they use the
+  §5 "tracking" framing. Other copy changes are limited to the checks-disabled notes in
+  `codemie update` / `codemie install --supported`, and hiding the "Latest tracked version" line of
+  the below-minimum message when the version is unknown.
 - A cache refresh that resolves to an unchanged version does not re-trigger `VersionWarningStore`'s
   notice.
 
