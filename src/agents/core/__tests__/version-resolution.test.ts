@@ -95,8 +95,9 @@ describe('isVersionChecksEnabled', () => {
 });
 
 describe('isLiveTrackedAgent', () => {
-  it('tracks kimi-acp like kimi, since it runs the same binary', () => {
-    expect(isLiveTrackedAgent('kimi-acp')).toBe(true);
+  it('tracks the ticket agents and kimi-acp, but not copilot-cli', () => {
+    expect(['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'].every(isLiveTrackedAgent)).toBe(true);
+    expect(isLiveTrackedAgent('copilot-cli')).toBe(false);
   });
 });
 
@@ -106,7 +107,7 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(resolveSupportedVersionDetailed(input)).resolves.toEqual({
       version: '0.160.0',
-      isLive: true,
+      isCurrent: true,
     });
   });
 
@@ -115,7 +116,7 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(resolveSupportedVersionDetailed(input)).resolves.toEqual({
       version: '0.154.0',
-      isLive: false,
+      isCurrent: false,
     });
     expect(getCachedLatestVersion).not.toHaveBeenCalled();
   });
@@ -125,14 +126,14 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(resolveSupportedVersionDetailed(input)).resolves.toEqual({
       version: '0.154.0',
-      isLive: false,
+      isCurrent: false,
     });
   });
 
   it('is not live when the lookup returns nothing', async () => {
     getCachedLatestVersion.mockResolvedValue(null);
 
-    await expect(resolveSupportedVersionDetailed(input)).resolves.toMatchObject({ isLive: false });
+    await expect(resolveSupportedVersionDetailed(input)).resolves.toMatchObject({ isCurrent: false });
   });
 
   it('is not live when npm reports a prerelease', async () => {
@@ -140,15 +141,29 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(resolveSupportedVersionDetailed(input)).resolves.toEqual({
       version: '0.154.0',
-      isLive: false,
+      isCurrent: false,
     });
   });
 
-  it('is not live for agents outside the live-tracked allowlist', async () => {
+  it('keeps the maintainer-pinned version current for agents outside the live-tracked list', async () => {
     await expect(
-      resolveSupportedVersionDetailed({ ...input, agentName: 'opencode' })
-    ).resolves.toMatchObject({ isLive: false });
+      resolveSupportedVersionDetailed({ ...input, agentName: 'copilot-cli', npmPackage: '@github/copilot' })
+    ).resolves.toEqual({ version: '0.154.0', isCurrent: true });
     expect(getCachedLatestVersion).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing current for an untracked agent with no pinned version', async () => {
+    await expect(
+      resolveSupportedVersionDetailed({ agentName: 'opencode', npmPackage: 'opencode-ai' })
+    ).resolves.toEqual({ version: undefined, isCurrent: false });
+  });
+
+  it('treats an untracked agent as unknown too when checks are disabled', async () => {
+    checksOff();
+
+    await expect(
+      resolveSupportedVersionDetailed({ ...input, agentName: 'copilot-cli' })
+    ).resolves.toMatchObject({ isCurrent: false });
   });
 });
 

@@ -287,13 +287,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * @returns Version compatibility result with status and version info
    */
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
-    const { version: resolved, isLive } = await resolveSupportedVersionDetailed({
+    const { version: resolved, isCurrent } = await resolveSupportedVersionDetailed({
       agentName: this.metadata.name,
       npmPackage: this.metadata.npmPackage,
       fallbackSupportedVersion: this.metadata.supportedVersion,
     });
-    const versionKnown = Boolean(isLive && resolved);
-    const supportedVersion = isLive && resolved ? resolved : 'latest';
+    const versionKnown = Boolean(isCurrent && resolved);
+    const supportedVersion = isCurrent && resolved ? resolved : 'latest';
     const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
 
     const installedVersion = await this.getVersion();
@@ -544,7 +544,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
     // Version handling (EPMCDME-13734): known-broken versions are refused,
-    // everything else is a one-time recommendation — no prompts, no re-nagging.
+    // everything else gets a one-time notice — no prompts, no re-nagging.
     // Resolve once and share: each check would otherwise do its own live lookup,
     // doubling the wait on every offline launch.
     const compat = this.metadata.supportedVersion ? await this.checkVersionCompatibility() : undefined;

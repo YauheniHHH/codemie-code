@@ -34,7 +34,7 @@ vi.mock('../../../core/version-resolution.js', () => ({
   resolveSupportedInstallVersion: vi.fn(async () => 'latest'),
   resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
     version: fallbackSupportedVersion,
-    isLive: true,
+    isCurrent: true,
   })),
 }));
 

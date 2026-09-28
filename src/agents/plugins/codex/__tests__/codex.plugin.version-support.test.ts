@@ -53,7 +53,7 @@ vi.mock('../../../core/version-resolution.js', () => ({
     .fn()
     .mockImplementation(async ({ fallbackSupportedVersion }) => ({
       version: fallbackSupportedVersion,
-      isLive: true,
+      isCurrent: true,
     })),
 }));
 
@@ -114,7 +114,7 @@ describe('CodexPlugin version support', () => {
     const resolution = await import('../../../core/version-resolution.js');
     vi.mocked(resolution.resolveSupportedVersionDetailed).mockResolvedValueOnce({
       version: '0.160.0',
-      isLive: true,
+      isCurrent: true,
     });
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.155.1\n', stderr: '' });
@@ -133,7 +133,7 @@ describe('CodexPlugin version support', () => {
     const resolution = await import('../../../core/version-resolution.js');
     vi.mocked(resolution.resolveSupportedVersionDetailed).mockResolvedValueOnce({
       version: '0.154.0',
-      isLive: false,
+      isCurrent: false,
     });
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.150.0\n', stderr: '' });

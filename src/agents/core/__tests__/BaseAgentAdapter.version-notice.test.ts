@@ -56,13 +56,13 @@ vi.mock('../../../utils/interactive.js', () => ({
 }));
 
 // Tracked version resolves to the metadata value as if confirmed live; flip
-// `isLive` to simulate checks disabled / lookup failure.
-const versionResolution = vi.hoisted(() => ({ isLive: true, liveVersion: undefined as string | undefined }));
+// `isCurrent` to simulate checks disabled / lookup failure.
+const versionResolution = vi.hoisted(() => ({ isCurrent: true, liveVersion: undefined as string | undefined }));
 vi.mock('../version-resolution.js', () => ({
   resolveSupportedInstallVersion: vi.fn(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
   resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
     version: versionResolution.liveVersion ?? fallbackSupportedVersion,
-    isLive: versionResolution.isLive,
+    isCurrent: versionResolution.isCurrent,
   })),
 }));
 
@@ -94,7 +94,7 @@ async function adapterFor(
 describe('warnOnceIfUntested', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    versionResolution.isLive = true;
+    versionResolution.isCurrent = true;
     versionResolution.liveVersion = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -125,7 +125,7 @@ describe('warnOnceIfUntested', () => {
 
   it('stays silent when the tracked version is unknown (checks off or lookup failed)', async () => {
     const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
-    versionResolution.isLive = false;
+    versionResolution.isCurrent = false;
     const adapter = await adapterFor('2.1.230');
 
     await adapter.warnOnceIfUntested();
@@ -192,20 +192,20 @@ describe('warnOnceIfUntested', () => {
 describe('run() below the minimum supported version', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    versionResolution.isLive = true;
+    versionResolution.isCurrent = true;
     versionResolution.liveVersion = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   it('still refuses to launch when the tracked version is unknown', async () => {
-    versionResolution.isLive = false;
+    versionResolution.isCurrent = false;
     const adapter = await adapterFor('2.1.100', { silentMode: true });
 
     await expect(adapter.run([])).rejects.toThrow(/below the minimum supported version/);
   });
 
   it('omits the "Latest tracked version" line when the tracked version is unknown', async () => {
-    versionResolution.isLive = false;
+    versionResolution.isCurrent = false;
     const adapter = await adapterFor('2.1.100');
     vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit called');

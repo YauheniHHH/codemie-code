@@ -1,10 +1,10 @@
-import { getCachedLatestVersion } from '../../utils/version-cache.js';
-import { extractVersion } from '../../utils/version-utils.js';
-import { ConfigLoader } from '../../utils/config.js';
-import { logger } from '../../utils/logger.js';
+import { getCachedLatestVersion } from '@/utils/version-cache.js';
+import { extractVersion } from '@/utils/version-utils.js';
+import { ConfigLoader } from '@/utils/config.js';
+import { logger } from '@/utils/logger.js';
 
-// kimi-acp runs the same package and binary as kimi (only its launch args differ).
-export const LIVE_TRACKED_AGENT_NAMES = ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp', 'copilot-cli'] as const;
+// The ticket's four agents; kimi-acp runs the same package and binary as kimi.
+export const LIVE_TRACKED_AGENT_NAMES = ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'] as const;
 
 /**
  * Whether the agent's tracked version follows its npm `latest` release (see
@@ -13,15 +13,13 @@ export const LIVE_TRACKED_AGENT_NAMES = ['claude', 'codex', 'gemini', 'kimi', 'k
  * @param agentName - agent metadata `name`, e.g. `codex`
  */
 export function isLiveTrackedAgent(agentName: string): boolean {
-	return (LIVE_TRACKED_AGENT_NAMES as readonly string[]).includes(agentName);
+  return (LIVE_TRACKED_AGENT_NAMES as readonly string[]).includes(agentName);
 }
 
 export interface ResolveSupportedVersionInput {
-	agentName: string;
-	npmPackage?: string | null;
-	fallbackSupportedVersion?: string;
-	/** Bypass the 24h cache TTL for this package's lookup only (does not touch the toggle). */
-	forceRefresh?: boolean;
+  agentName: string;
+  npmPackage?: string | null;
+  fallbackSupportedVersion?: string;
 }
 
 /**
@@ -34,91 +32,90 @@ export interface ResolveSupportedVersionInput {
  * explicit `false` disables checks; an unreadable config or unrecognized value leaves them on.
  */
 export async function isVersionChecksEnabled(workingDir: string = process.cwd()): Promise<boolean> {
-	const envValue = process.env.CODEMIE_VERSION_CHECKS_ENABLED;
-	if (envValue !== undefined) {
-		return envValue !== 'false';
-	}
+  const envValue = process.env.CODEMIE_VERSION_CHECKS_ENABLED;
+  if (envValue !== undefined) {
+    return envValue !== 'false';
+  }
 
-	const scopes: Array<{ scope: string; load: () => Promise<{ workspace?: { versionChecks?: { enabled?: unknown } } }> }> = [
-		{ scope: 'local', load: () => ConfigLoader.loadLocalMultiProviderConfig(workingDir) },
-		{ scope: 'global', load: () => ConfigLoader.loadMultiProviderConfig() },
-	];
-	for (const { scope, load } of scopes) {
-		try {
-			const enabled = (await load()).workspace?.versionChecks?.enabled;
-			if (enabled !== undefined) {
-				return enabled !== false;
-			}
-		} catch (error) {
-			logger.debug('[version-resolution] config read failed, skipping scope', { scope, error: String(error) });
-		}
-	}
-	return true;
+  const scopes: Array<{ scope: string; load: () => Promise<{ workspace?: { versionChecks?: { enabled?: unknown } } }> }> = [
+    { scope: 'local', load: () => ConfigLoader.loadLocalMultiProviderConfig(workingDir) },
+    { scope: 'global', load: () => ConfigLoader.loadMultiProviderConfig() },
+  ];
+  for (const { scope, load } of scopes) {
+    try {
+      const enabled = (await load()).workspace?.versionChecks?.enabled;
+      if (enabled !== undefined) {
+        return enabled !== false;
+      }
+    } catch (error) {
+      logger.debug('[version-resolution] config read failed, skipping scope', { scope, error: String(error) });
+    }
+  }
+  return true;
 }
 
 // Matches a prerelease/build-metadata suffix after the numeric version, e.g. "1.2.3-beta.1" or
 // "v1.2.3-rc1+build5" — npm's `latest` dist-tag should never point at one, but a live lookup is
-// external input and this guards against silently presenting it as the recommended version.
+// external input and this guards against silently presenting it as the tracked version.
 const PRERELEASE_SUFFIX_PATTERN = /\d+\.\d+\.\d+[-+]/;
 
 export interface ResolvedSupportedVersion {
-	/** Version to install or display; the metadata fallback when no live value is available. */
-	version: string | undefined;
-	/**
-	 * True only when `version` came from a successful npm lookup (fresh or cached). False when the
-	 * toggle is off, the lookup failed, or the live value was rejected — callers comparing against
-	 * it must then behave as if no supported version were configured, not present the fallback as
-	 * current.
-	 */
-	isLive: boolean;
+  /** Version to install or display; the metadata fallback when no live value is available. */
+  version: string | undefined;
+  /**
+   * Whether `version` can be treated as the current tracked version: a successful (possibly
+   * cached) npm lookup for a live-tracked agent, or the maintainer-pinned value for any other
+   * agent. False when checks are off, or a live-tracked agent's lookup failed or was rejected —
+   * callers must then behave as if no supported version were configured.
+   */
+  isCurrent: boolean;
 }
 
 /**
- * Resolve the version CodeMie tracks for an agent. Only a successful (possibly cached) npm lookup
- * is reported as live; checks disabled, a failed lookup, a prerelease or an untracked agent all
- * return the metadata fallback with `isLive: false`, which passive callers must treat as unknown.
+ * Resolve the version CodeMie tracks for an agent. Live-tracked agents use the npm `latest`
+ * release; a failed or rejected lookup returns the metadata fallback with `isCurrent: false`.
+ * Other agents keep their maintainer-pinned version, unchanged. With checks off nothing is current.
  *
- * @param input - agent name, npm package, metadata fallback and optional forced refresh
- * @returns the resolved version and whether it came from a live lookup
+ * @param input - agent name, npm package and metadata fallback
+ * @returns the resolved version and whether it is current
  */
 export async function resolveSupportedVersionDetailed(
-	input: ResolveSupportedVersionInput
+  input: ResolveSupportedVersionInput
 ): Promise<ResolvedSupportedVersion> {
-	const { agentName, npmPackage, fallbackSupportedVersion, forceRefresh } = input;
-	const fallback: ResolvedSupportedVersion = { version: fallbackSupportedVersion, isLive: false };
+  const { agentName, npmPackage, fallbackSupportedVersion } = input;
+  const fallback: ResolvedSupportedVersion = { version: fallbackSupportedVersion, isCurrent: false };
 
-	if (!isLiveTrackedAgent(agentName) || !npmPackage) {
-		return fallback;
-	}
+  if (!(await isVersionChecksEnabled())) {
+    return fallback;
+  }
 
-	const enabled = await isVersionChecksEnabled();
-	if (!enabled) {
-		return fallback;
-	}
+  if (!isLiveTrackedAgent(agentName) || !npmPackage) {
+    return { version: fallbackSupportedVersion, isCurrent: Boolean(fallbackSupportedVersion) };
+  }
 
-	try {
-		const live = await getCachedLatestVersion(npmPackage, { forceRefresh });
-		if (live && PRERELEASE_SUFFIX_PATTERN.test(live)) {
-			logger.debug('[resolveSupportedVersion] live version looks like a prerelease, using fallback', {
-				agentName,
-				live,
-			});
-			return fallback;
-		}
-		const extracted = live ? extractVersion(live) : null;
-		return extracted ? { version: extracted, isLive: true } : fallback;
-	} catch (error) {
-		logger.debug('[resolveSupportedVersion] live lookup failed, using fallback', { agentName, error: String(error) });
-		return fallback;
-	}
+  try {
+    const live = await getCachedLatestVersion(npmPackage);
+    if (live && PRERELEASE_SUFFIX_PATTERN.test(live)) {
+      logger.debug('[resolveSupportedVersion] live version looks like a prerelease, using fallback', {
+        agentName,
+        live,
+      });
+      return fallback;
+    }
+    const extracted = live ? extractVersion(live) : null;
+    return extracted ? { version: extracted, isCurrent: true } : fallback;
+  } catch (error) {
+    logger.debug('[resolveSupportedVersion] live lookup failed, using fallback', { agentName, error: String(error) });
+    return fallback;
+  }
 }
 
 /**
- * Install target for `installVersion('supported')`: the live tracked version, or the `latest`
- * channel when it is unknown (checks off, lookup failed). Never the hardcoded fallback, which can
- * be far behind upstream and would install — or downgrade to — a stale release.
+ * Install target for `installVersion('supported')`: the current tracked version, or the `latest`
+ * channel when it is unknown (checks off, lookup failed). Never a stale fallback, which can be far
+ * behind upstream and would install — or downgrade to — an old release.
  */
 export async function resolveSupportedInstallVersion(input: ResolveSupportedVersionInput): Promise<string> {
-	const { version, isLive } = await resolveSupportedVersionDetailed(input);
-	return isLive && version ? version : 'latest';
+  const { version, isCurrent } = await resolveSupportedVersionDetailed(input);
+  return isCurrent && version ? version : 'latest';
 }
