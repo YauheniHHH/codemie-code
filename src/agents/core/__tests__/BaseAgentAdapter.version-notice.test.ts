@@ -57,11 +57,11 @@ vi.mock('../../../utils/interactive.js', () => ({
 
 // Tracked version resolves to the metadata value as if confirmed live; flip
 // `isLive` to simulate checks disabled / lookup failure.
-const versionResolution = vi.hoisted(() => ({ isLive: true }));
+const versionResolution = vi.hoisted(() => ({ isLive: true, liveVersion: undefined as string | undefined }));
 vi.mock('../version-resolution.js', () => ({
   resolveSupportedInstallVersion: vi.fn(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
   resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
-    version: fallbackSupportedVersion,
+    version: versionResolution.liveVersion ?? fallbackSupportedVersion,
     isLive: versionResolution.isLive,
   })),
 }));
@@ -95,7 +95,32 @@ describe('warnOnceIfUntested', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     versionResolution.isLive = true;
+    versionResolution.liveVersion = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('notices against the live tracked version, not the pinned fallback', async () => {
+    const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
+    versionResolution.liveVersion = '2.1.300';
+    // Installed equals the metadata fallback, so only a live-based comparison produces a notice.
+    const adapter = await adapterFor('2.1.218');
+
+    await adapter.warnOnceIfUntested();
+
+    expect(VersionWarningStore.recordWarning).toHaveBeenCalledWith('claude', '2.1.218', '2.1.300', '0.15.1');
+    const printed = vi.mocked(console.error).mock.calls.flat().join('\n');
+    expect(printed).toContain('CodeMie is tracking Claude Code v2.1.300');
+  });
+
+  it('stays silent when the installed version matches the live tracked version', async () => {
+    const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
+    versionResolution.liveVersion = '2.1.300';
+    const adapter = await adapterFor('2.1.300');
+
+    await adapter.warnOnceIfUntested();
+
+    expect(console.error).not.toHaveBeenCalled();
+    expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
   });
 
   it('stays silent when the tracked version is unknown (checks off or lookup failed)', async () => {
@@ -168,6 +193,7 @@ describe('run() below the minimum supported version', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     versionResolution.isLive = true;
+    versionResolution.liveVersion = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
