@@ -700,15 +700,14 @@ export async function autoSelectModelTiers(
   return result;
 }
 
-// The live version-check path (ConfigLoader.load() + getCachedLatestVersion()'s own
-// FETCH_TIMEOUT_MS-bounded npm exec) starts its internal clock after this function's own
-// preceding overhead, so its worst case finishes strictly later than FETCH_TIMEOUT_MS alone.
-// Margin keeps this outer race from losing to its own inner timeout on a cold cache.
+// The version check reads the config and then runs its own FETCH_TIMEOUT_MS-bounded registry
+// lookup, so its worst case ends later than FETCH_TIMEOUT_MS; the margin keeps this outer race
+// from losing to that inner timeout on a cold cache.
 const CLAUDE_VERSION_CHECK_TIMEOUT_MS = FETCH_TIMEOUT_MS + 2000;
 
 /**
  * Check and install Claude Code if needed
- * Called during first-time setup to ensure Claude is installed with supported version
+ * Called during first-time setup; installs the tracked version (the latest release when unknown)
  */
 async function checkAndInstallClaude(): Promise<void> {
   try {
@@ -736,10 +735,10 @@ async function checkAndInstallClaude(): Promise<void> {
       ]);
 
       if (installClaude) {
-        const spinner = ora('Installing Claude Code (supported version)...').start();
+        const spinner = ora('Installing Claude Code...').start();
 
         try {
-          // Install supported version
+          // Installs the tracked version, or the latest release when that is unknown
           if (claude.installVersion) {
             await claude.installVersion('supported');
           } else {

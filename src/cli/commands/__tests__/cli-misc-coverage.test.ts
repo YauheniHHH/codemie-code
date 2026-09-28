@@ -53,6 +53,10 @@ vi.mock('@/utils/processes.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/utils/processes.js')>();
   return { ...actual, getLatestVersion: npmMock.getLatestVersion, installGlobal: npmMock.installGlobal };
 });
+// Live-tracked agents read the registry directly; route it to the same mock.
+vi.mock('@/utils/npm-registry.js', () => ({
+  fetchLatestVersionFromRegistry: (pkg: string) => npmMock.getLatestVersion(pkg),
+}));
 
 // restoreCliBinLink — no-op (would otherwise touch the filesystem).
 vi.mock('@/utils/cli-bin.js', () => ({ restoreCliBinLink: vi.fn(async () => {}) }));
@@ -351,27 +355,17 @@ describe('createUpdateCommand', () => {
     expect(agent.installVersion).not.toHaveBeenCalled();
   });
 
-  it('--force-refresh re-checks npm even when a fresh cache entry exists', async () => {
-    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/force-refresh') as never);
-    npmMock.getLatestVersion.mockResolvedValueOnce('2.0.0').mockResolvedValueOnce('3.0.0');
+  it('answers a repeat check from the 24h cache instead of the registry', async () => {
+    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/cached') as never);
+    npmMock.getLatestVersion.mockResolvedValue('2.0.0');
+    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
 
+    // A newer registry value must not be seen while the cached entry is fresh.
+    npmMock.getLatestVersion.mockResolvedValue('3.0.0');
     await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
-    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
+
     expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(1);
-
-    await createUpdateCommand().parseAsync(['codex', '--check', '--force-refresh'], { from: 'user' });
-    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(2);
-    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('3.0.0'));
-  });
-
-  it('--force-refresh is a no-op with a note when version checks are disabled', async () => {
-    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
-    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/force-refresh-off') as never);
-
-    await createUpdateCommand().parseAsync(['codex', '--force-refresh'], { from: 'user' });
-
-    expect(captured()).toContain('--force-refresh is a no-op');
-    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('2.0.0'));
   });
 
   it('updates a specific npm-based agent via installGlobal with force:true', async () => {

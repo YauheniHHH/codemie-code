@@ -34,10 +34,7 @@ interface UpdateCheckResult {
 /**
  * Check a single agent for available updates
  */
-async function checkAgentForUpdate(
-  agent: AgentAdapter,
-  options: { forceRefresh?: boolean } = {}
-): Promise<UpdateCheckResult | null> {
+async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResult | null> {
   // Check if installed
   const installed = await agent.isInstalled();
   if (!installed) {
@@ -83,20 +80,16 @@ async function checkAgentForUpdate(
     return null;
   }
 
-  // Get latest version — allowlisted agents resolve through the live-tracking
-  // accessor (24h-cached npm lookup with fail-safe fallback); everyone else
-  // (opencode, pi, and any other manageable npm agent) keeps the direct lookup.
-  // A non-live result (checks off, lookup failed) is the hardcoded fallback —
-  // skip the agent rather than offer an "update" measured against a stale value.
+  // Live-tracked agents use the cached tracked version; others (opencode, pi) query npm
+  // directly. A non-live result is the stale fallback, so skip rather than offer it.
   let latestVersion: string | null | undefined;
   if (isLiveTrackedAgent(agent.name)) {
     const resolved = await resolveSupportedVersionDetailed({
       agentName: agent.name,
       npmPackage,
       fallbackSupportedVersion: agent.metadata.supportedVersion,
-      forceRefresh: options.forceRefresh,
     });
-    latestVersion = resolved.isLive ? resolved.version : null;
+    latestVersion = resolved.isCurrent ? resolved.version : null;
   } else {
     latestVersion = await npm.getLatestVersion(npmPackage);
   }
@@ -130,15 +123,13 @@ async function checkAgentForUpdate(
 /**
  * Check all installed agents for updates
  */
-async function checkAllAgentsForUpdates(
-  options: { forceRefresh?: boolean } = {}
-): Promise<UpdateCheckResult[]> {
+async function checkAllAgentsForUpdates(): Promise<UpdateCheckResult[]> {
   const agents = AgentRegistry.getManageableAgents();
   const results: UpdateCheckResult[] = [];
 
   // Check all agents in parallel
   const checks = await Promise.all(
-    agents.map(agent => checkAgentForUpdate(agent, options))
+    agents.map(agent => checkAgentForUpdate(agent))
   );
 
   for (const result of checks) {
@@ -229,8 +220,7 @@ export function createUpdateCommand(): Command {
     .argument('[name]', 'Agent name to update (run without argument for interactive selection)')
     .option('-c, --check', 'Check for available updates without installing')
     .option('--verbose', 'Show detailed update logs for troubleshooting')
-    .option('-f, --force-refresh', 'Bypass the 24h version cache and re-check npm')
-    .action(async (name?: string, options?: { check?: boolean; verbose?: boolean; forceRefresh?: boolean }) => {
+    .action(async (name?: string, options?: { check?: boolean; verbose?: boolean }) => {
       try {
         // Enable debug mode if --verbose flag is set
         if (options?.verbose) {
@@ -239,17 +229,7 @@ export function createUpdateCommand(): Command {
           console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
         }
 
-        // Force-refresh bypasses only the 24h TTL for the package(s) actually being checked
-        // below (scoped per-agent via `resolveSupportedVersionDetailed`'s `forceRefresh`) — it never
-        // wipes the shared cache file, and it's a no-op when version checks are disabled.
         const versionChecksEnabled = await isVersionChecksEnabled();
-        const forceRefresh = Boolean(options?.forceRefresh) && versionChecksEnabled;
-        if (options?.forceRefresh && !versionChecksEnabled) {
-          console.log(
-            chalk.dim('Version checks are disabled (versionChecks.enabled=false) — --force-refresh is a no-op.\n')
-          );
-        }
-
         const checkOnly = options?.check ?? false;
 
         // Case 1: Update specific agent
@@ -287,7 +267,7 @@ export function createUpdateCommand(): Command {
 
           const spinner = ora(`Checking ${agent.displayName} for updates...`).start();
 
-          const result = await checkAgentForUpdate(agent, { forceRefresh });
+          const result = await checkAgentForUpdate(agent);
 
           if (!result) {
             spinner.warn(`Could not check ${agent.displayName} for updates`);
@@ -336,7 +316,7 @@ export function createUpdateCommand(): Command {
         }
         const spinner = ora('Checking for updates...').start();
 
-        const results = await checkAllAgentsForUpdates({ forceRefresh });
+        const results = await checkAllAgentsForUpdates();
 
         if (results.length === 0 && !versionChecksEnabled) {
           spinner.info('Nothing to check — live-tracked agents are skipped while version checks are disabled');
