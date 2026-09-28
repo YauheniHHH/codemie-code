@@ -110,6 +110,43 @@ describe('CodexPlugin version support', () => {
     expect(compat.compatible).toBe(false);
   });
 
+  it('compares against the live tracked version when it differs from the pinned fallback', async () => {
+    const resolution = await import('../../../core/version-resolution.js');
+    vi.mocked(resolution.resolveSupportedVersionDetailed).mockResolvedValueOnce({
+      version: '0.160.0',
+      isLive: true,
+    });
+    const processes = await import('../../../../utils/processes.js');
+    vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.155.1\n', stderr: '' });
+
+    const { CodexPlugin } = await import('../codex.plugin.js');
+    const compat = await new CodexPlugin().checkVersionCompatibility();
+
+    // Against the 0.154.0 fallback this install would read as "newer"; against live it is behind.
+    expect(compat.supportedVersion).toBe('0.160.0');
+    expect(compat.versionKnown).toBe(true);
+    expect(compat.hasUpdate).toBe(true);
+    expect(compat.isNewer).toBe(false);
+  });
+
+  it('reports the tracked version as unknown, not the fallback, when resolution is not live', async () => {
+    const resolution = await import('../../../core/version-resolution.js');
+    vi.mocked(resolution.resolveSupportedVersionDetailed).mockResolvedValueOnce({
+      version: '0.154.0',
+      isLive: false,
+    });
+    const processes = await import('../../../../utils/processes.js');
+    vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.150.0\n', stderr: '' });
+
+    const { CodexPlugin } = await import('../codex.plugin.js');
+    const compat = await new CodexPlugin().checkVersionCompatibility();
+
+    expect(compat.versionKnown).toBe(false);
+    expect(compat.supportedVersion).toBe('latest');
+    expect(compat.hasUpdate).toBe(false);
+    expect(compat.isBelowMinimum).toBe(false);
+  });
+
   it('marks Codex versions below the minimum supported version as below minimum', async () => {
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({
@@ -177,6 +214,18 @@ describe('CodexPlugin version support', () => {
         clientType: 'codemie-codex',
       })
     );
+  });
+
+  it("installs the live tracked version for 'supported', not the pinned fallback", async () => {
+    const resolution = await import('../../../core/version-resolution.js');
+    vi.mocked(resolution.resolveSupportedInstallVersion).mockResolvedValueOnce('0.160.0');
+    const processes = await import('../../../../utils/processes.js');
+    vi.mocked(processes.installGlobal).mockResolvedValue(undefined);
+
+    const { CodexPlugin } = await import('../codex.plugin.js');
+    await new CodexPlugin().installVersion('supported');
+
+    expect(processes.installGlobal).toHaveBeenCalledWith('@openai/codex', { version: '0.160.0' });
   });
 
   it('sets an isolated CODEX_HOME for CodeMie-managed Codex runs', async () => {
