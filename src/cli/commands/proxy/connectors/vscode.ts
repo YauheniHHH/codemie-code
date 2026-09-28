@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
+import { writeFileAtomically } from '@/utils/atomic-write.js';
 import { fetchTenantModelDescriptors } from './tenant-catalog.js';
 import {
   buildDefaultVsCodeCapability,
@@ -243,25 +244,7 @@ async function readProviders(configPath: string): Promise<unknown[]> {
 }
 
 export async function writeAtomically(configPath: string, content: string): Promise<void> {
-  const configDir = dirname(configPath);
-  await mkdir(configDir, { recursive: true });
-
-  const tempPath = `${configPath}.${process.pid}.tmp`;
-  const mode = existsSync(configPath)
-    ? (await stat(configPath)).mode & 0o777
-    : 0o600;
-
-  try {
-    await writeFile(tempPath, content, { encoding: 'utf-8', mode });
-    await rename(tempPath, configPath);
-  } catch (error) {
-    try {
-      await unlink(tempPath);
-    } catch {
-      // The temporary file may not have been created or may already be renamed.
-    }
-    throw error;
-  }
+  await writeFileAtomically(configPath, content);
 }
 
 export async function writeVsCodeLanguageModelsConfig(
