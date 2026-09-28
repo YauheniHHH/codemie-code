@@ -472,9 +472,6 @@ export class ConfigLoader {
     if (process.env.CODEMIE_DEBUG) {
       env.debug = process.env.CODEMIE_DEBUG === 'true';
     }
-    if (process.env.CODEMIE_VERSION_CHECKS_ENABLED !== undefined) {
-      env.versionChecks = { enabled: process.env.CODEMIE_VERSION_CHECKS_ENABLED !== 'false' };
-    }
     if (process.env.CODEMIE_ALLOWED_DIRS) {
       env.allowedDirs = process.env.CODEMIE_ALLOWED_DIRS.split(',').map(s => s.trim());
     }

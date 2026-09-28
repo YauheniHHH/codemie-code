@@ -150,7 +150,7 @@ export function createInstallCommand(): Command {
                 return;
               } else {
                 // Different version installed, ask to reinstall
-                const versionDisplay = options?.supported ? `${actualVersionToInstall} (supported)` : actualVersionToInstall;
+                const versionDisplay = options?.supported ? `${actualVersionToInstall} (tracked)` : actualVersionToInstall;
                 console.log(chalk.yellow(`${agent.displayName} v${installedVersion} is already installed (requested: ${versionDisplay})`));
                 const inquirer = (await import('inquirer')).default;
                 const { confirm } = await inquirer.prompt([
@@ -177,13 +177,35 @@ export function createInstallCommand(): Command {
               }
 
               return;
+            } else if (trackedVersionUnknown) {
+              // --supported with no known target: ask, as for any other version change
+              const installedDisplay = installedVersion ? ` v${installedVersion}` : '';
+              console.log(
+                chalk.yellow(
+                  `${agent.displayName}${installedDisplay} is already installed; the tracked version is unavailable (version checks disabled or npm unreachable).`
+                )
+              );
+              const inquirer = (await import('inquirer')).default;
+              const { confirm } = await inquirer.prompt([
+                {
+                  type: 'confirm',
+                  name: 'confirm',
+                  message: 'Reinstall with the latest release?',
+                  default: false,
+                },
+              ]);
+
+              if (!confirm) {
+                console.log(chalk.gray('Installation cancelled'));
+                return;
+              }
             }
           }
 
           // Build installation message
           const isUsingSupported = versionToInstall === 'supported';
           const versionMessage = isUsingSupported && actualVersionToInstall
-            ? ` v${actualVersionToInstall} (supported version)`
+            ? ` v${actualVersionToInstall} (tracked version)`
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`
             : '';
