@@ -1,4 +1,4 @@
-import * as fs from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { writeFileAtomically } from './atomic-write.js';
 import { logger } from './logger.js';
 import { getCodemiePath } from './paths.js';
@@ -54,7 +54,7 @@ function isCacheEntry(value: unknown): value is CacheEntry {
 // "not cached" and is healed by the next successful write instead of breaking every lookup.
 async function loadCache(): Promise<CacheFile> {
 	try {
-		const content = await fs.readFile(filePath(), 'utf-8');
+		const content = await readFile(filePath(), 'utf-8');
 		const packages = (JSON.parse(content) as { packages?: unknown } | null)?.packages;
 		if (typeof packages !== 'object' || packages === null || Array.isArray(packages)) {
 			return emptyCache();
@@ -112,6 +112,15 @@ async function fetchAndStore(packageName: string): Promise<FetchOutcome> {
 	return { ok: true, version };
 }
 
+/**
+ * The package's npm `latest` version, served from a 24h cache. A cache miss (or `forceRefresh`)
+ * fetches from npm. When that fetch fails, an entry still inside its TTL is returned; otherwise
+ * `null`, so an expired value is never presented as current.
+ *
+ * @param packageName - npm package name, e.g. `@openai/codex`
+ * @param options.forceRefresh - bypass the TTL and re-check npm now
+ * @returns the version string, or `null` when no current value is available
+ */
 export async function getCachedLatestVersion(
 	packageName: string,
 	options: { forceRefresh?: boolean } = {}

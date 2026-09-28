@@ -6,6 +6,12 @@ import { logger } from '../../utils/logger.js';
 // kimi-acp runs the same package and binary as kimi (only its launch args differ).
 export const LIVE_TRACKED_AGENT_NAMES = ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp', 'copilot-cli'] as const;
 
+/**
+ * Whether the agent's tracked version follows its npm `latest` release (see
+ * {@link LIVE_TRACKED_AGENT_NAMES}). Other agents are never looked up live.
+ *
+ * @param agentName - agent metadata `name`, e.g. `codex`
+ */
 export function isLiveTrackedAgent(agentName: string): boolean {
 	return (LIVE_TRACKED_AGENT_NAMES as readonly string[]).includes(agentName);
 }
@@ -67,6 +73,14 @@ export interface ResolvedSupportedVersion {
 	isLive: boolean;
 }
 
+/**
+ * Resolve the version CodeMie tracks for an agent. Only a successful (possibly cached) npm lookup
+ * is reported as live; checks disabled, a failed lookup, a prerelease or an untracked agent all
+ * return the metadata fallback with `isLive: false`, which passive callers must treat as unknown.
+ *
+ * @param input - agent name, npm package, metadata fallback and optional forced refresh
+ * @returns the resolved version and whether it came from a live lookup
+ */
 export async function resolveSupportedVersionDetailed(
 	input: ResolveSupportedVersionInput
 ): Promise<ResolvedSupportedVersion> {
