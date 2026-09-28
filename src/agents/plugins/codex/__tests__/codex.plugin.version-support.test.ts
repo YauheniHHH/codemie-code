@@ -204,6 +204,70 @@ describe('CodexPlugin version support', () => {
     expect(toml).toContain('check_for_update_on_startup = false');
   });
 
+  it.each([
+    ['a quoted top-level key', '"check_for_update_on_startup" = true\n'],
+    ['a key after a multi-line array', 'trusted = [\n  "a",\n  ["b"],\n]\ncheck_for_update_on_startup = true\n'],
+  ])('does not add a duplicate key when the user already set it as %s', async (_label, existing) => {
+    const { mkdir, readFile, writeFile } = await import('fs/promises');
+    const { join } = await import('path');
+    const home = join(homeState.dir, '.codex/codemie/home');
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, 'config.toml'), existing, 'utf-8');
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+
+    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
+
+    expect(await readFile(join(home, 'config.toml'), 'utf-8')).toBe(existing);
+  });
+
+  it('adds the top-level key when the same name only exists inside another table', async () => {
+    const { mkdir, readFile, writeFile } = await import('fs/promises');
+    const { join } = await import('path');
+    const TOML = (await import('@iarna/toml')).default;
+    const home = join(homeState.dir, '.codex/codemie/home');
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, 'config.toml'), '[profiles.work]\ncheck_for_update_on_startup = true\n', 'utf-8');
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+
+    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
+
+    const parsed = TOML.parse(await readFile(join(home, 'config.toml'), 'utf-8')) as Record<string, unknown>;
+    expect(parsed.check_for_update_on_startup).toBe(false);
+    expect(parsed.profiles).toEqual({ work: { check_for_update_on_startup: true } });
+  });
+
+  it('leaves a config.toml that does not parse untouched', async () => {
+    const { mkdir, readFile, writeFile } = await import('fs/promises');
+    const { join } = await import('path');
+    const home = join(homeState.dir, '.codex/codemie/home');
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, 'config.toml'), 'this is = = not toml\n', 'utf-8');
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+
+    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
+
+    expect(await readFile(join(home, 'config.toml'), 'utf-8')).toBe('this is = = not toml\n');
+  });
+
+  it('runs getVersion through a shell only on Windows, where codex is an npm .cmd shim', async () => {
+    const processes = await import('../../../../utils/processes.js');
+    vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.155.1', stderr: '' });
+    const { CodexPlugin } = await import('../codex.plugin.js');
+    const originalPlatform = process.platform;
+
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      await new CodexPlugin().getVersion();
+      expect(processes.exec).toHaveBeenLastCalledWith('codex', ['--version'], expect.objectContaining({ shell: true }));
+
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      await new CodexPlugin().getVersion();
+      expect(processes.exec).toHaveBeenLastCalledWith('codex', ['--version'], expect.objectContaining({ shell: false }));
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('leaves Codex self-update checks alone when version checks are disabled', async () => {
     const { existsSync } = await import('fs');
     const { join } = await import('path');
