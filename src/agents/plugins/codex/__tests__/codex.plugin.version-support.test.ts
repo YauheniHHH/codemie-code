@@ -34,6 +34,14 @@ vi.mock('../../../../utils/logger.js', () => ({
   },
 }));
 
+// Codex is a live-tracked agent (LIVE_TRACKED_AGENT_NAMES), so
+// checkVersionCompatibility()/installVersion() resolve `supportedVersion` via
+// resolveSupportedVersion(), which hits the npm registry for @openai/codex's
+// current `latest` tag. Without this mock, the tests below made a real
+// network call and asserted against whatever version npm actually returns,
+// so they failed nondeterministically in CI once a newer Codex version
+// shipped. Mocking it to echo back fallbackSupportedVersion pins the tests
+// to CODEX_SUPPORTED_VERSION again, matching kimi.plugin.test.ts's pattern.
 vi.mock('../../../core/version-resolution.js', () => ({
   resolveSupportedVersion: vi
     .fn()
