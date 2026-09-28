@@ -1,5 +1,5 @@
 import * as fs from 'fs/promises';
-import * as path from 'path';
+import { writeFileAtomically } from './atomic-write.js';
 import { logger } from './logger.js';
 import { getCodemiePath } from './paths.js';
 import { getLatestVersion } from './processes.js';
@@ -57,10 +57,11 @@ async function loadCache(): Promise<CacheFile> {
 	}
 }
 
+// Atomic so a second codemie process reading the file mid-write sees the old or new
+// version, never a torn one. Lost updates across processes remain possible — the
+// worst case is one extra npm lookup.
 async function saveCache(cache: CacheFile): Promise<void> {
-	const file = filePath();
-	await fs.mkdir(path.dirname(file), { recursive: true });
-	await fs.writeFile(file, JSON.stringify(cache, null, 2), 'utf-8');
+	await writeFileAtomically(filePath(), JSON.stringify(cache, null, 2));
 }
 
 export async function getCachedLatestVersion(
@@ -69,29 +70,49 @@ export async function getCachedLatestVersion(
 ): Promise<string | null> {
 	const cache = await loadCache();
 	const entry = cache.packages[packageName];
-	const isFresh =
-		!options.forceRefresh && !!entry && Date.now() - Date.parse(entry.fetchedAt) < TTL_MS;
-	if (isFresh) return entry.version;
+	const ageMs = entry ? Date.now() - Date.parse(entry.fetchedAt) : NaN;
+	// A future fetchedAt (clock skew, hand-edited file) must not count as fresh forever.
+	const withinTtl = !!entry && ageMs >= 0 && ageMs < TTL_MS;
+	if (withinTtl && !options.forceRefresh) return entry.version;
 
+	// On a failed fetch, an entry still inside its TTL is as current as a normal cache hit;
+	// an expired one could be arbitrarily old and must not be presented as current, so
+	// the check is skipped instead. Failures aren't cached, so the next call retries.
+	const onFetchFailure = (reason: string): string | null => {
+		logger.warn('[version-cache] live version lookup failed', {
+			packageName,
+			reason,
+			usingCachedEntry: withinTtl,
+		});
+		return withinTtl && entry ? entry.version : null;
+	};
+
+	let live: string | null;
 	try {
-		const live = await getLatestVersion(packageName, { timeout: FETCH_TIMEOUT_MS });
-		if (!live) return entry?.version ?? null;
-		// Scoped write: only this package's entry changes. Re-read the cache at write time
-		// (inside the serialized queue) rather than reusing the pre-fetch snapshot, so a
-		// concurrent refresh of another package isn't clobbered by this one.
+		live = await getLatestVersion(packageName, { timeout: FETCH_TIMEOUT_MS });
+	} catch (error) {
+		return onFetchFailure(String(error));
+	}
+	if (!live) return onFetchFailure('no version returned (offline, registry error or timeout)');
+
+	// Scoped write: only this package's entry changes. Re-read the cache at write time
+	// (inside the serialized queue) rather than reusing the pre-fetch snapshot, so a
+	// concurrent refresh of another package isn't clobbered by this one. A failed write
+	// must not discard the value that was just fetched.
+	const fetched = live;
+	try {
 		await enqueueCacheWrite(async () => {
 			const latest = await loadCache();
-			latest.packages[packageName] = { version: live, fetchedAt: new Date().toISOString() };
+			latest.packages[packageName] = { version: fetched, fetchedAt: new Date().toISOString() };
 			await saveCache(latest);
 		});
-		return live;
 	} catch (error) {
-		logger.debug('[version-cache] live lookup failed, using stale cache if present', {
+		logger.warn('[version-cache] failed to persist fetched version', {
 			packageName,
 			error: String(error),
 		});
-		return entry?.version ?? null;
 	}
+	return fetched;
 }
 
 export async function clearVersionCache(): Promise<{ removed: number }> {
