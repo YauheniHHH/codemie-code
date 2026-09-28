@@ -188,6 +188,28 @@ Environment variables override config file values and are useful for CI/CD, Dock
 - Cache location: `~/.codemie/.last-update-check`
 - See `codemie self-update --help` for manual update options
 
+#### Agent Version Checks
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `CODEMIE_VERSION_CHECKS_ENABLED` | Compare installed agents (Claude, Codex, Gemini, Kimi, Copilot) against the latest release on npm | `true` | `false` to turn checks off |
+
+When enabled, CodeMie looks up each agent's latest npm release (cached for 24h) and shows a one-time notice when your installed version differs; `codemie doctor` and `codemie update` use the same value. A failed lookup is written to the CodeMie log file and never blocks a launch — the check is simply skipped until the next launch.
+
+With checks off there is no lookup, notice, or update offer for these agents. `codemie install <agent> --supported` then installs the latest release, and the minimum-version guard (which refuses versions known to be broken) still applies.
+
+The same switch can be set in `~/.codemie/codemie-cli.config.json` (all projects) or a project's `.codemie/codemie-cli.config.json`:
+
+```json
+{
+  "workspace": {
+    "versionChecks": { "enabled": false }
+  }
+}
+```
+
+Precedence: the env var, then the project setting, then the global one. Only an explicit `false` turns checks off.
+
 #### Security & File Access
 
 | Variable | Description | Example |
