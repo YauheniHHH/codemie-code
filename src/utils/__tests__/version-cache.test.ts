@@ -15,7 +15,7 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
 }));
 
-import { getCachedLatestVersion } from '../version-cache.js';
+import { getCachedLatestVersion, refreshCachedLatestVersion } from '../version-cache.js';
 
 const PKG = '@openai/codex';
 const HOUR = 60 * 60 * 1000;
@@ -105,11 +105,73 @@ describe('getCachedLatestVersion', () => {
     );
   });
 
+  it('treats npm output that is not a version as a failure and does not cache it', async () => {
+    getLatestVersion.mockResolvedValue('npm notice New major version of npm available!');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[version-cache] live version lookup failed',
+      expect.objectContaining({ reason: 'unparsable npm output' })
+    );
+    await expect(readFile(join(state.dir, 'version-cache.json'), 'utf-8')).rejects.toThrow();
+  });
+
+  it('passes a prerelease string through unchanged so the resolver can reject it', async () => {
+    getLatestVersion.mockResolvedValue('0.161.0-beta.1');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.161.0-beta.1');
+  });
+
+  it.each([
+    ['packages is null', { version: 1, packages: null }],
+    ['packages is an array', { version: 1, packages: [] }],
+    ['an entry has the wrong shape', { version: 1, packages: { [PKG]: { version: 42 } } }],
+  ])('recovers when %s, and heals the file on the next write', async (_label, content) => {
+    await writeFile(join(state.dir, 'version-cache.json'), JSON.stringify(content), 'utf-8');
+    getLatestVersion.mockResolvedValue('0.160.0');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
+    const saved = JSON.parse(await readFile(join(state.dir, 'version-cache.json'), 'utf-8'));
+    expect(saved.packages[PKG].version).toBe('0.160.0');
+  });
+
   it('does not cache a failure, so the next call retries', async () => {
     getLatestVersion.mockResolvedValueOnce(null).mockResolvedValueOnce('0.160.0');
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
     expect(getLatestVersion).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('refreshCachedLatestVersion', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    state.dir = await mkdtemp(join(tmpdir(), 'codemie-version-cache-'));
+  });
+
+  afterEach(async () => {
+    await rm(state.dir, { recursive: true, force: true });
+  });
+
+  it('re-checks a fresh entry against npm and stores the new value', async () => {
+    await seedCache('0.150.0', 1 * HOUR);
+    getLatestVersion.mockResolvedValue('0.160.0');
+
+    await expect(refreshCachedLatestVersion(PKG)).resolves.toBe(true);
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
+    expect(getLatestVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the existing entry when the lookup fails, instead of wiping it', async () => {
+    await seedCache('0.150.0', 1 * HOUR);
+    getLatestVersion.mockResolvedValue(null);
+
+    await expect(refreshCachedLatestVersion(PKG)).resolves.toBe(false);
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.150.0');
+    expect(warn).toHaveBeenCalledWith(
+      '[version-cache] forced version refresh failed',
+      expect.objectContaining({ packageName: PKG })
+    );
   });
 });

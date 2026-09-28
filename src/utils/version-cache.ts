@@ -9,6 +9,10 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 // lookup against their own timeout (e.g. `codemie setup`) can size their timeout with margin.
 export const FETCH_TIMEOUT_MS = 3000;
 
+// What `npm view <pkg> version` prints for a real release. Prerelease/build suffixes are kept
+// (not stripped) so version-resolution can still recognize and reject them.
+const NPM_VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
+
 interface CacheEntry {
 	version: string;
 	fetchedAt: string;
@@ -19,12 +23,14 @@ interface CacheFile {
 	packages: Record<string, CacheEntry>;
 }
 
+type FetchOutcome = { ok: true; version: string } | { ok: false; reason: string };
+
 const filePath = (): string => getCodemiePath('version-cache.json');
 const emptyCache = (): CacheFile => ({ version: 1, packages: {} });
 
-// Serializes every cache write (including clear) behind an in-process promise chain so
-// concurrent callers (e.g. `Promise.all` over all agents in `checkAllAgentsForUpdates`) can't
-// interleave a read-modify-write and silently drop each other's freshly-fetched entries.
+// Serializes every cache write behind an in-process promise chain so concurrent callers
+// (e.g. `Promise.all` over all agents in `checkAllAgentsForUpdates`) can't interleave a
+// read-modify-write and silently drop each other's freshly-fetched entries.
 let writeQueue: Promise<unknown> = Promise.resolve();
 function enqueueCacheWrite<T>(task: () => Promise<T>): Promise<T> {
 	const result = writeQueue.then(task, task);
@@ -35,18 +41,29 @@ function enqueueCacheWrite<T>(task: () => Promise<T>): Promise<T> {
 	return result;
 }
 
+function isCacheEntry(value: unknown): value is CacheEntry {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		typeof (value as CacheEntry).version === 'string' &&
+		typeof (value as CacheEntry).fetchedAt === 'string'
+	);
+}
+
+// Keeps only well-formed entries, so a hand-edited or partially corrupt file degrades to
+// "not cached" and is healed by the next successful write instead of breaking every lookup.
 async function loadCache(): Promise<CacheFile> {
 	try {
 		const content = await fs.readFile(filePath(), 'utf-8');
-		const parsed = JSON.parse(content) as unknown;
-		if (
-			typeof parsed === 'object' &&
-			parsed !== null &&
-			typeof (parsed as CacheFile).packages === 'object'
-		) {
-			return parsed as CacheFile;
+		const packages = (JSON.parse(content) as { packages?: unknown } | null)?.packages;
+		if (typeof packages !== 'object' || packages === null || Array.isArray(packages)) {
+			return emptyCache();
 		}
-		return emptyCache();
+		const valid: Record<string, CacheEntry> = {};
+		for (const [name, entry] of Object.entries(packages)) {
+			if (isCacheEntry(entry)) valid[name] = entry;
+		}
+		return { version: 1, packages: valid };
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === 'ENOENT') return emptyCache();
@@ -64,6 +81,37 @@ async function saveCache(cache: CacheFile): Promise<void> {
 	await writeFileAtomically(filePath(), JSON.stringify(cache, null, 2));
 }
 
+// Fetches the package's npm `latest` and caches it. Failures (including output that isn't a
+// version) are never cached, so the next call retries. A failed write keeps the fetched value.
+async function fetchAndStore(packageName: string): Promise<FetchOutcome> {
+	let raw: string | null;
+	try {
+		raw = await getLatestVersion(packageName, { timeout: FETCH_TIMEOUT_MS });
+	} catch (error) {
+		return { ok: false, reason: String(error) };
+	}
+	if (!raw) return { ok: false, reason: 'no version returned (offline, registry error or timeout)' };
+	const version = raw.trim();
+	if (!NPM_VERSION_PATTERN.test(version)) return { ok: false, reason: 'unparsable npm output' };
+
+	// Scoped write: only this package's entry changes. Re-read the cache at write time
+	// (inside the serialized queue) rather than reusing the pre-fetch snapshot, so a
+	// concurrent refresh of another package isn't clobbered by this one.
+	try {
+		await enqueueCacheWrite(async () => {
+			const latest = await loadCache();
+			latest.packages[packageName] = { version, fetchedAt: new Date().toISOString() };
+			await saveCache(latest);
+		});
+	} catch (error) {
+		logger.warn('[version-cache] failed to persist fetched version', {
+			packageName,
+			error: String(error),
+		});
+	}
+	return { ok: true, version };
+}
+
 export async function getCachedLatestVersion(
 	packageName: string,
 	options: { forceRefresh?: boolean } = {}
@@ -75,59 +123,28 @@ export async function getCachedLatestVersion(
 	const withinTtl = !!entry && ageMs >= 0 && ageMs < TTL_MS;
 	if (withinTtl && !options.forceRefresh) return entry.version;
 
-	// On a failed fetch, an entry still inside its TTL is as current as a normal cache hit;
-	// an expired one could be arbitrarily old and must not be presented as current, so
-	// the check is skipped instead. Failures aren't cached, so the next call retries.
-	const onFetchFailure = (reason: string): string | null => {
-		logger.warn('[version-cache] live version lookup failed', {
-			packageName,
-			reason,
-			usingCachedEntry: withinTtl,
-		});
-		return withinTtl && entry ? entry.version : null;
-	};
+	const outcome = await fetchAndStore(packageName);
+	if (outcome.ok) return outcome.version;
 
-	let live: string | null;
-	try {
-		live = await getLatestVersion(packageName, { timeout: FETCH_TIMEOUT_MS });
-	} catch (error) {
-		return onFetchFailure(String(error));
-	}
-	if (!live) return onFetchFailure('no version returned (offline, registry error or timeout)');
-
-	// Scoped write: only this package's entry changes. Re-read the cache at write time
-	// (inside the serialized queue) rather than reusing the pre-fetch snapshot, so a
-	// concurrent refresh of another package isn't clobbered by this one. A failed write
-	// must not discard the value that was just fetched.
-	const fetched = live;
-	try {
-		await enqueueCacheWrite(async () => {
-			const latest = await loadCache();
-			latest.packages[packageName] = { version: fetched, fetchedAt: new Date().toISOString() };
-			await saveCache(latest);
-		});
-	} catch (error) {
-		logger.warn('[version-cache] failed to persist fetched version', {
-			packageName,
-			error: String(error),
-		});
-	}
-	return fetched;
+	// An entry still inside its TTL is as current as a normal cache hit; an expired one could
+	// be arbitrarily old and must not be presented as current, so the check is skipped instead.
+	logger.warn('[version-cache] live version lookup failed', {
+		packageName,
+		reason: outcome.reason,
+		usingCachedEntry: withinTtl,
+	});
+	return withinTtl && entry ? entry.version : null;
 }
 
-export async function clearVersionCache(): Promise<{ removed: number }> {
-	return enqueueCacheWrite(async () => {
-		const file = filePath();
-		const cache = await loadCache();
-		const removed = Object.keys(cache.packages).length;
-		try {
-			await fs.unlink(file);
-			return { removed };
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException).code;
-			if (code === 'ENOENT') return { removed: 0 };
-			logger.warn('[version-cache] clear() failed; cache left in place', { file, code });
-			return { removed: 0 };
-		}
-	});
+/**
+ * Re-check one package against npm regardless of its cache age (`codemie doctor
+ * --refresh-versions`). On failure the existing entry is left as it is. Returns whether npm
+ * answered with a version.
+ */
+export async function refreshCachedLatestVersion(packageName: string): Promise<boolean> {
+	const outcome = await fetchAndStore(packageName);
+	if (!outcome.ok) {
+		logger.warn('[version-cache] forced version refresh failed', { packageName, reason: outcome.reason });
+	}
+	return outcome.ok;
 }
