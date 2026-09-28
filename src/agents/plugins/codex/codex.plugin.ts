@@ -65,6 +65,7 @@ import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation
 import { mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import TOML from '@iarna/toml';
 import { writeFileAtomically } from '../../../utils/atomic-write.js';
 import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
@@ -97,9 +98,12 @@ const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
  * explicit choice. Prepended rather than appended: a top-level key must precede any
  * `[table]` header in TOML, and the file may already contain tables.
  *
- * The "already set" check only looks at the segment before the first `[table]`
- * header — a same-named key nested under an unrelated table is a different,
- * table-scoped setting, not this one, and must not count as already configured.
+ * The "already set" check looks only at the parsed file's top level — a same-named
+ * key nested under an unrelated table is a different, table-scoped setting, not
+ * this one, and must not count as already configured.
+ *
+ * Once written, the value stays after version checks are turned off: CodeMie doesn't
+ * record that it added it, so it can't tell its value from one the user set.
  *
  * Only applied to the CodeMie-owned CODEX_HOME and only while version checks are
  * enabled — a CODEX_HOME the user set up is their own config and is left alone.
@@ -114,8 +118,11 @@ async function ensureUpdateCheckDisabled(codexHome: string): Promise<void> {
   const configPath = join(codexHome, 'config.toml');
   try {
     const existing = existsSync(configPath) ? await readFile(configPath, 'utf-8') : '';
-    const rootSegment = existing.split(/^\s*\[/m)[0];
-    if (/^\s*check_for_update_on_startup\s*=/m.test(rootSegment)) {
+    // Parse rather than pattern-match: a quoted key, or a key after a multi-line array,
+    // must still count as set, or prepending would create a duplicate (invalid) key.
+    // A file that doesn't parse is the user's to fix; leave it untouched.
+    const parsed = TOML.parse(existing);
+    if (Object.prototype.hasOwnProperty.call(parsed, 'check_for_update_on_startup')) {
       return;
     }
     await writeFileAtomically(configPath, `check_for_update_on_startup = false\n${existing}`);
