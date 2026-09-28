@@ -325,6 +325,55 @@ describe('createUpdateCommand', () => {
     expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
   });
 
+  // Each test below uses its own package name so earlier tests' cache entries can't satisfy it.
+  function liveTrackedAgent(npmPackage: string, installed = '1.0.0'): Record<string, unknown> {
+    return {
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage, supportedVersion: '9.9.9' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => installed),
+      installVersion: vi.fn(async () => '9.9.9'),
+    };
+  }
+
+  it('never offers the hardcoded fallback as an update when the live lookup fails', async () => {
+    const agent = liveTrackedAgent('@codemie-test/lookup-fails');
+    registryMock.getAgent.mockReturnValue(agent as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync(['codex'], { from: 'user' });
+
+    expect(spinner.warn).toHaveBeenCalledWith('Could not check OpenAI Codex CLI for updates');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+    expect(agent.installVersion).not.toHaveBeenCalled();
+  });
+
+  it('--force-refresh re-checks npm even when a fresh cache entry exists', async () => {
+    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/force-refresh') as never);
+    npmMock.getLatestVersion.mockResolvedValueOnce('2.0.0').mockResolvedValueOnce('3.0.0');
+
+    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
+    await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
+    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(1);
+
+    await createUpdateCommand().parseAsync(['codex', '--check', '--force-refresh'], { from: 'user' });
+    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(2);
+    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('3.0.0'));
+  });
+
+  it('--force-refresh is a no-op with a note when version checks are disabled', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
+    registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/force-refresh-off') as never);
+
+    await createUpdateCommand().parseAsync(['codex', '--force-refresh'], { from: 'user' });
+
+    expect(captured()).toContain('--force-refresh is a no-op');
+    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+  });
+
   it('updates a specific npm-based agent via installGlobal with force:true', async () => {
     const agent = {
       name: 'gemini',
