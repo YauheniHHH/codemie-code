@@ -59,7 +59,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       };
     }
 
-    if (version !== compat.supportedVersion) {
+    if (compat.versionKnown !== false && version !== compat.supportedVersion) {
       return {
         status: 'warn',
         message: `${agent.displayName}${versionStr} - CodeMie is tracking v${compat.supportedVersion}`,

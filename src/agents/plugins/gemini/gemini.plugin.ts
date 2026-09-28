@@ -6,6 +6,7 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { validateGeminiModel } from './gemini.models.js';
+import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
 /**
  * Fallback tracked Gemini CLI version, used only if the live npm lookup fails
@@ -171,9 +172,9 @@ export const GeminiPluginMetadata: AgentMetadata = {
           // mid-launch (even during a bare `--version` probe), which fights
           // CodeMie's own version tracking. ensureJsonFile only fills this in
           // when missing, so an explicit user choice here is left untouched.
-          general: {
-            enableAutoUpdate: false
-          }
+          // This is the user's shared ~/.gemini/settings.json (standalone gemini
+          // reads it too), so it's skipped when version checks are disabled.
+          ...((await isVersionChecksEnabled()) ? { general: { enableAutoUpdate: false } } : {}),
         }
       );
 

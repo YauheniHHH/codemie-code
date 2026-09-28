@@ -203,6 +203,9 @@ export interface VersionCompatibilityResult {
   hasUpdate: boolean;               // true if newer supported version available (one-time notice)
   isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
   minimumSupportedVersion?: string; // minimum version required to run (from metadata)
+  // false when checks are off or the live lookup failed: supportedVersion is then 'latest'
+  // and no "tracking vX" notice may be shown. Optional so older mocks/callers stay valid.
+  versionKnown?: boolean;
 }
 
 /**
@@ -843,9 +846,10 @@ export interface AgentAdapter {
   /**
    * Emit a one-time notice when the installed version differs from the
    * recommended one, and record it so later launches stay silent. Never
-   * prompts, never blocks, never throws.
+   * prompts, never blocks, never throws. Pass an already-computed result to
+   * avoid a second version lookup.
    */
-  warnOnceIfUntested(): Promise<void>;
+  warnOnceIfUntested(precomputed?: VersionCompatibilityResult): Promise<void>;
 
   /**
    * Detect installation method (optional, for installation-aware agents)

@@ -65,7 +65,8 @@ import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation
 import { mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { writeAtomically } from '../../../cli/commands/proxy/connectors/vscode.js';
+import { writeFileAtomically } from '../../../utils/atomic-write.js';
+import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
 /**
  * Fallback tracked Codex CLI version, used only if the live npm lookup fails
@@ -100,7 +101,10 @@ const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
  * header — a same-named key nested under an unrelated table is a different,
  * table-scoped setting, not this one, and must not count as already configured.
  *
- * Writes via `writeAtomically` (temp file + rename) so two `codemie-codex`
+ * Only applied to the CodeMie-owned CODEX_HOME and only while version checks are
+ * enabled — a CODEX_HOME the user set up is their own config and is left alone.
+ *
+ * Writes atomically (temp file + rename) so two `codemie-codex`
  * processes launching at once can't interleave their writes into a corrupted,
  * duplicate-key file — each write still fully replaces the file it read, so the
  * last one to land simply wins, which is fine since both are writing the same
@@ -114,7 +118,7 @@ async function ensureUpdateCheckDisabled(codexHome: string): Promise<void> {
     if (/^\s*check_for_update_on_startup\s*=/m.test(rootSegment)) {
       return;
     }
-    await writeAtomically(configPath, `check_for_update_on_startup = false\n${existing}`);
+    await writeFileAtomically(configPath, `check_for_update_on_startup = false\n${existing}`);
   } catch (error) {
     logger.debug('[codex] Failed to disable check_for_update_on_startup', { error: String(error) });
   }
@@ -200,12 +204,14 @@ export const CodexPluginMetadata: AgentMetadata = {
      * history, and rollout files do not pollute native Codex state.
      */
     async beforeRun(env: NodeJS.ProcessEnv) {
-      if (!env.CODEX_HOME) {
-        env.CODEX_HOME = resolveHomeDir('.codex/codemie/home');
-      }
+      const codemieOwnedHome = !env.CODEX_HOME;
+      const codexHome = env.CODEX_HOME || resolveHomeDir('.codex/codemie/home');
+      env.CODEX_HOME = codexHome;
 
-      await mkdir(env.CODEX_HOME, { recursive: true });
-      await ensureUpdateCheckDisabled(env.CODEX_HOME);
+      await mkdir(codexHome, { recursive: true });
+      if (codemieOwnedHome && (await isVersionChecksEnabled())) {
+        await ensureUpdateCheckDisabled(codexHome);
+      }
 
       return env;
     },

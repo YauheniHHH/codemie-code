@@ -274,6 +274,57 @@ describe('createListCommand', () => {
 // createUpdateCommand — spawn is mocked; we only assert the install args.
 // ===========================================================================
 describe('createUpdateCommand', () => {
+  // The env var wins over every config scope, so these tests never depend on
+  // the developer's own versionChecks setting.
+  beforeEach(() => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'true';
+  });
+  afterEach(() => {
+    delete process.env.CODEMIE_VERSION_CHECKS_ENABLED;
+  });
+
+  it('skips a live-tracked agent with a note, and never looks it up, when version checks are disabled', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
+    const agent = {
+      name: 'gemini',
+      displayName: 'Gemini CLI',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: '@google/gemini-cli' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.0.0'),
+    };
+    registryMock.getAgent.mockReturnValue(agent as never);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync(['gemini'], { from: 'user' });
+
+    expect(captured()).toContain('Version checks are disabled');
+    expect(captured()).not.toContain('Could not check');
+    expect(spinner.warn).not.toHaveBeenCalled();
+    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+  });
+
+  it('explains an empty result instead of "No updatable agents installed" when checks are disabled', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'false';
+    registryMock.getManageableAgents.mockReturnValue([
+      {
+        name: 'gemini',
+        displayName: 'Gemini CLI',
+        metadata: { isBuiltIn: false, npmPackage: '@google/gemini-cli' },
+        isInstalled: vi.fn(async () => true),
+        getVersion: vi.fn(async () => '1.0.0'),
+      },
+    ] as never);
+
+    const cmd = createUpdateCommand();
+    await cmd.parseAsync([], { from: 'user' });
+
+    expect(spinner.info).toHaveBeenCalledWith(expect.stringContaining('version checks are disabled'));
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+    expect(npmMock.getLatestVersion).not.toHaveBeenCalled();
+  });
+
   it('updates a specific npm-based agent via installGlobal with force:true', async () => {
     const agent = {
       name: 'gemini',
