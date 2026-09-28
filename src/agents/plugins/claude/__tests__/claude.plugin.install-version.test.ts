@@ -13,7 +13,7 @@ vi.mock('../../../../utils/native-installer.js', () => ({
 const LIVE_VERSION = '2.1.300';
 vi.mock('../../../core/version-resolution.js', () => ({
   resolveSupportedInstallVersion: vi.fn(async () => LIVE_VERSION),
-  resolveSupportedVersionDetailed: vi.fn(async () => ({ version: LIVE_VERSION, isLive: true })),
+  resolveSupportedVersionDetailed: vi.fn(async () => ({ version: LIVE_VERSION, isCurrent: true })),
   isVersionChecksEnabled: vi.fn(async () => true),
 }));
 
