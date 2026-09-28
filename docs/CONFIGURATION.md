@@ -192,9 +192,9 @@ Environment variables override config file values and are useful for CI/CD, Dock
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `CODEMIE_VERSION_CHECKS_ENABLED` | Compare installed agents (Claude, Codex, Gemini, Kimi, Copilot) against the latest release on npm | `true` | `false` to turn checks off |
+| `CODEMIE_VERSION_CHECKS_ENABLED` | Compare installed agents (Claude, Codex, Gemini, Kimi) against their latest release on npm | `true` | `false` to turn checks off |
 
-When enabled, CodeMie looks up each agent's latest npm release (cached for 24h) and shows a one-time notice when your installed version differs; `codemie doctor` and `codemie update` use the same value. A failed lookup is written to the CodeMie log file and never blocks a launch — the check is simply skipped until the next launch.
+When enabled, CodeMie reads each agent's latest release from your configured npm registry (cached for 24h) and shows a one-time notice when your installed version differs; `codemie doctor` and `codemie update` use the same value. The lookup is a single HTTPS request that honors npm's `registry`/`@scope:registry` settings and `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`; registries that require authentication aren't supported. A failed lookup (3s limit) is written to the CodeMie log file and never blocks a launch — the check is simply skipped until the next launch.
 
 With checks off there is no lookup, notice, or update offer for these agents. `codemie install <agent> --supported` then installs the latest release, and the minimum-version guard (which refuses versions known to be broken) still applies.
 
