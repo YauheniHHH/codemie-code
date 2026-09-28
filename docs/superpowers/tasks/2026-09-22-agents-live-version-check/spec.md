@@ -13,9 +13,10 @@ switch.
 
 ## Scope
 
-**Explicit named allowlist of five agents** — Claude, Codex, Gemini, Kimi, Copilot CLI — all
-verified to share the identical hardcoded-constant pattern (`<AGENT>_SUPPORTED_VERSION` /
-`<AGENT>_MINIMUM_SUPPORTED_VERSION`):
+**Explicit named allowlist of the ticket's four agents** — Claude, Codex, Gemini, Kimi (plus Kimi
+ACP, the same binary) — all sharing the hardcoded-constant pattern (`<AGENT>_SUPPORTED_VERSION` /
+`<AGENT>_MINIMUM_SUPPORTED_VERSION`). Copilot CLI was verified below but, per PR #576 review, is left
+out: it isn't one of the ticket's agents, so it keeps its maintainer-pinned version, unchanged.
 
 - Claude (`@anthropic-ai/claude-code`) — npm/upstream lockstep verified.
 - Kimi (`@moonshot-ai/kimi-code`) — npm/upstream lockstep verified.
@@ -30,8 +31,8 @@ verified to share the identical hardcoded-constant pattern (`<AGENT>_SUPPORTED_V
   method) — npm/upstream lockstep verified live (`npm view` → `1.0.87`, matches GitHub's latest
   release tag `v1.0.87` exactly).
 
-Kimi ACP needs no separate allowlist entry: it extends `KimiPlugin` and inherits
-`KimiPluginMetadata` directly, so "Kimi" already covers it. Claude ACP
+Kimi ACP needs its own allowlist entry: the allowlist is keyed by agent name and Kimi ACP is named
+`kimi-acp`, though it inherits `KimiPluginMetadata` and runs the same binary. Claude ACP
 (`claude-acp.plugin.ts`) is explicitly **not** in scope — see Design §2 for why.
 
 ## Design
@@ -44,53 +45,56 @@ Kimi ACP needs no separate allowlist entry: it extends `KimiPlugin` and inherits
 
 ### 1. Version cache module
 
-New module (e.g. `src/utils/version-cache.ts`) exposing `getCachedLatestVersion(packageName, {
-forceRefresh? }): Promise<string | null>`. Wraps the existing `getLatestVersion()`
-(`processes.ts:315`). Persists `{ [packageName]: { version, fetchedAt } }` to a new JSON file under
-`~/.codemie/` (sibling to `version-warnings.json`, not part of the `ConfigLoader` schema). TTL is 24h
-from `fetchedAt` (a `fetchedAt` in the future counts as stale); `forceRefresh: true` bypasses the
-TTL. On npm failure (timeout, network, unparsable output) it returns the cached value only if that
-entry is still inside its TTL, else `null` — an expired entry is never presented as current. Every
-failure is logged with `logger.warn` (log file only). Failures are not cached, so the next call
-retries. Writes are atomic (temp file + rename); a failed write still returns the fetched value.
-Unparsable output means anything other than a version string. Malformed entries in the cache file
-are ignored, and the next successful write replaces them.
+New module `src/utils/version-cache.ts` exposing `getCachedLatestVersion(packageName): Promise<string
+| null>`. Persists `{ [packageName]: { version, fetchedAt } }` to a new JSON file under `~/.codemie/`
+(sibling to `version-warnings.json`, not part of the `ConfigLoader` schema). TTL is 24h from
+`fetchedAt` (a `fetchedAt` in the future counts as stale). On a miss it reads the package's `latest`
+version from the npm registry (`src/utils/npm-registry.ts`). A failed lookup (timeout, network,
+non-200, or a response that isn't a version string) returns `null`, never the expired entry, and is
+logged with `logger.warn` (log file only). Failures are not cached, so the next call retries. A failed
+cache write still returns the fetched value; malformed or torn cache files read as empty, and the next
+successful write replaces them.
+
+The registry is queried directly (one HTTPS GET of `<registry>/<name>/latest`, 3s limit) rather than
+by spawning `npm view`: measured on a Windows laptop, `npm view` took 2.5–3.8s per package and ~4s
+each when run in parallel, so the original 3s limit was routinely exceeded and the feature silently did
+nothing. The direct request takes well under a second. It honors npm's `registry` and `@scope:registry`
+settings (env var, project `.npmrc`, user `.npmrc`) and `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`, plus
+npm's `https-proxy`/`proxy`. Registries that require authentication aren't supported; those lookups
+fail safely.
 
 ### 2. `supportedVersion` becomes live-tracked, uniformly, for an explicit allowlist
 
-Each of the five plugins' hardcoded constants (`CLAUDE_SUPPORTED_VERSION`, `CODEX_SUPPORTED_VERSION`,
-`GEMINI_SUPPORTED_VERSION`, `KIMI_SUPPORTED_VERSION`, `COPILOT_SUPPORTED_VERSION`) stays in the
-source as the fallback-of-last-resort. A new shared accessor — e.g. `resolveSupportedVersion(agent):
-Promise<string>` — becomes the single place both `checkVersionCompatibility()` and
-`checkAgentForUpdate()` read from:
+The plugins' hardcoded constants (`CLAUDE_SUPPORTED_VERSION`, `CODEX_SUPPORTED_VERSION`,
+`GEMINI_SUPPORTED_VERSION`, `KIMI_SUPPORTED_VERSION`) stay in the source as the fallback of last
+resort. One shared accessor, `resolveSupportedVersionDetailed()` in
+`src/agents/core/version-resolution.ts`, is the single place both `checkVersionCompatibility()` and
+`checkAgentForUpdate()` read from. It returns `{ version, isCurrent }`:
 
-1. Look up the agent by an **explicit named allowlist** (agent id/name, not a structural check such
-   as "does `metadata.npmPackage` exist"). Only `claude`, `codex`, `gemini`, `kimi`, `kimi-acp`
-   (same package and binary as `kimi`), and `copilot-cli` are live-tracked. `claude-acp` is not:
-   its `getVersion()` returns `null`, so it never takes part in version comparison.
-2. If the agent is allowlisted and the global toggle (Section 3) is off: no network I/O, and the
-   result is marked **not live**.
-3. If allowlisted and the toggle is on, resolve via the version cache for the agent's npm package,
-   extracting the version with the existing `extractVersion()` convention already used by
-   `checkAgentForUpdate`'s non-Claude path. Only this path is marked **live**.
-4. On any cache/fetch failure, a prerelease value, or a non-allowlisted agent, the result is marked
-   **not live**.
+1. With the global toggle (Section 3) off, nothing is current, for any agent, and there's no network
+   I/O.
+2. Agents are matched by an **explicit named allowlist** (agent name, not a structural check such as
+   "does `metadata.npmPackage` exist"): `claude`, `codex`, `gemini`, `kimi` and `kimi-acp`.
+   `claude-acp` is not: its `getVersion()` returns `null`, so it never takes part in version
+   comparison.
+3. For an allowlisted agent the version cache is consulted for its npm package, extracting the version
+   with the existing `extractVersion()` convention. Only a successful lookup is current. A failed
+   lookup or a prerelease value returns the fallback with `isCurrent: false`.
+4. Any other agent with a pinned version (e.g. Copilot CLI) keeps it as current, exactly as before.
 
-The accessor (`resolveSupportedVersionDetailed()`) returns `{ version, isLive }`.
-`checkVersionCompatibility()` exposes this as `versionKnown`; when it is `false`, the result reports
-`supportedVersion: 'latest'`, `compatible: true`, and no update. The launch notice, `codemie doctor`,
-`codemie setup` and `codemie update` then behave as if no supported version were configured. The
-`minimumSupportedVersion` gate is computed independently and still applies. `installVersion('supported')`
-(`resolveSupportedInstallVersion()`) installs the live version, or the `latest` channel when it is
-unknown — never the hardcoded constant, which can be far behind upstream. `run()` resolves
-compatibility once and shares it between the minimum gate and the notice.
+`checkVersionCompatibility()` exposes `isCurrent` as `versionKnown`. When it is `false`, the result
+reports `supportedVersion: 'latest'`, `compatible: true`, and no update. The launch notice, `codemie
+doctor`, `codemie setup` and `codemie update` then behave as if no supported version were configured.
+The `minimumSupportedVersion` gate is computed independently and still applies in every case.
+`installVersion('supported')` (`resolveSupportedInstallVersion()`) installs the current version, or
+the `latest` channel when it is unknown — never the stale constant, which can be far behind upstream.
+`run()` resolves compatibility once and shares it between the minimum gate and the notice.
 
 `checkVersionCompatibility()` (`BaseAgentAdapter.ts:284`) becomes async and calls this accessor
 instead of reading `this.metadata.supportedVersion` directly; its callers (`run()`'s startup warning,
 `install.ts`, `update.ts`, `AgentsCheck.ts`, `setup.ts`'s `checkAndInstallClaude`) are updated to
 await it. `checkAgentForUpdate()`'s Claude special-case (`update.ts:58-79`) is deleted — Claude now
-goes through the same uniform npm-backed path as the other four allowlisted agents, via the same
-accessor.
+goes through the same uniform path as the other allowlisted agents, via the same accessor.
 
 ### 3. Global toggle
 
@@ -99,62 +103,65 @@ New nested boolean on `WorkspaceConfig`, following the existing `metrics.enabled
 `.codemie/codemie-cli.config.json`, env var `CODEMIE_VERSION_CHECKS_ENABLED`. It is resolved field by
 field — env var, then project, then global — not through `ConfigLoader.load()`. `load()` swaps in a
 project's whole `workspace` block (which would hide a global setting the project doesn't repeat) and
-throws when no profile is active (which would hide the env var). Both the env var and the config value resolve **fail-safe**: any
-value other than an explicit, recognized "disable" (e.g. literal `false` for the config field,
-`'false'` for the env var) resolves to enabled — the deliberate inverse of the `CODEMIE_DEBUG ===
-'true'` fail-closed convention, required because an invalid or unrecognized stored value must never
-silently disable checks.
+throws when no profile is active (which would hide the env var). Both the env var and the config
+value resolve **fail-safe**: any value other than an explicit, recognized "disable" (literal `false`
+for the config field, `'false'` for the env var) resolves to enabled — the deliberate inverse of the
+`CODEMIE_DEBUG === 'true'` fail-closed convention, because an invalid or unrecognized stored value
+must never silently disable checks.
 
-When disabled, allowlisted agents resolve as not live, with no network calls from any gated flow:
+When disabled there are no network calls from any gated flow:
 - **Launch notice:** silent.
-- **`codemie setup`:** shows a plain "installed" line.
+- **`codemie setup`:** shows a plain "installed" line; a missing Claude is still offered for install
+  (a missing-agent prompt, not a version check), with neutral copy.
 - **`codemie doctor`:** no "tracking vX" warning.
 - **`codemie update`:** skips these agents, with a dim "version checks are disabled" note instead of
   "Could not check".
+- **Minimum-version block:** unchanged. The ticket keeps it "as-is" and scopes this story to the
+  recommended/supported advisory only.
 
-`codemie doctor` and `codemie update`'s force-refresh bypasses only the 24h TTL, not the toggle —
-with the toggle off, force-refresh is a no-op. Codex's and Gemini's own self-update suppression is
-also skipped while checks are off. A value written earlier is left in place when checks are turned
-off: CodeMie can't tell its value from one the user set. This is documented in
-`docs/CONFIGURATION.md`.
+Codex's and Gemini's own self-update suppression is also skipped while checks are off. A value
+written earlier is left in place when checks are turned off: CodeMie can't tell its value from one the
+user set. This is documented in `docs/CONFIGURATION.md`.
 
 ### 4. Notice-dedup interaction
 
 `VersionWarningStore` keeps keying its one-time notice on the resolved `supportedVersion` string,
-unchanged. Because `resolveSupportedVersion()` only produces a new value when npm's reported version
-actually changes, a same-value cache refresh returns the identical string and the existing dedup
-logic in `version-warnings.ts` naturally stays silent — no code change needed there.
+unchanged. Because the resolver only produces a new value when npm's reported version actually
+changes, a same-value cache refresh returns the identical string and the existing dedup logic in
+`version-warnings.ts` naturally stays silent — no code change needed there.
 
 ### 5. UI copy
 
 Once the number follows npm rather than a hand-tested pin, every string that says CodeMie "tested",
 "verified" or "recommends" a version is inaccurate. All of them use "tracking" framing instead
-(decided during implementation, superseding the original two-string scope):
+(decided during implementation, answering the ticket's open question on terminology):
 
 - `update.ts` — up-to-date message: "no newer version available".
-- `setup.ts` — "ahead of the tracked v...".
+- `setup.ts` — "ahead of the tracked v...", and a neutral "Installing Claude Code..." spinner.
 - `AgentsCheck.ts` — "CodeMie is tracking v...".
+- `install.ts` — "(tracked version)" instead of "(supported version)".
 - The launch notice ("CodeMie is tracking X vN; you are running vM"), the `install --supported`
   option help, and the two related `tips.json` entries.
 
 ## Acceptance Criteria
 
-- The allowlisted agents' (Claude, Codex, Gemini, Kimi incl. Kimi ACP, Copilot CLI) tracked version
-  is sourced from a cached npm `latest` lookup when the global toggle is on. On fetch failure or with
-  the toggle off it is reported as unknown: no notice, warning or update offer. The hardcoded constant
-  is never presented as current.
+- The allowlisted agents' (Claude, Codex, Gemini, Kimi incl. Kimi ACP) tracked version is sourced
+  from a cached npm registry lookup when the global toggle is on. On lookup failure or with the toggle
+  off it is reported as unknown: no notice, warning or update offer. The hardcoded constant is never
+  presented as current.
 - The accessor keys off an explicit named allowlist, not a structural signal like
-  `metadata.npmPackage` presence — `claude-acp` is never targeted for a live lookup.
+  `metadata.npmPackage` presence — `claude-acp` is never targeted for a live lookup. Agents outside it
+  (Copilot CLI) keep their pinned version, unchanged.
 - `minimumSupportedVersion` still blocks launch below the floor regardless of the toggle or lookup
   outcome.
-- `checkAgentForUpdate()` no longer special-cases Claude; all five allowlisted agents go through one
+- `checkAgentForUpdate()` no longer special-cases Claude; all allowlisted agents go through one
   uniform check.
 - A single setting (env var > project > global) gates the startup warning, `codemie setup`,
   `codemie doctor` and `codemie update` identically. A global `false` holds in projects that have
   their own `workspace` block, and the env var works without an active profile.
 - An invalid or unrecognized stored value for the toggle resolves to "checks enabled."
-- `codemie doctor --refresh-versions` and `codemie update --force-refresh` re-check each package
-  against npm, bypassing only the 24h TTL; a failed lookup keeps that package's existing entry.
+- `install --supported` with an unknown tracked version installs the latest release, and asks first
+  when the agent is already installed.
 - No user-facing string claims CodeMie "tested", "verified" or "recommends" a version; they use the
   §5 "tracking" framing. Other copy changes are limited to the checks-disabled notes in
   `codemie update` / `codemie install --supported`, and hiding the "Latest tracked version" line of
@@ -167,26 +174,30 @@ Once the number follows npm rather than a hand-tested pin, every string that say
 - `minimumSupportedVersion` stays hardcoded and keeps blocking (even with checks off). Its
   comparison is only moved ahead of the unknown-version exit so it keeps working, and its message
   drops the "Latest tracked version" line when that version is unknown.
-- opencode and pi agents are not touched by this change.
+- New `codemie doctor` features. `doctor` already compares versions on `main` (#553) through the
+  shared gate, so it follows the tracked version automatically; there is no forced-refresh flag.
+- Forced cache refresh flags for `doctor` or `update` (dropped in PR #576 review; not asked for by
+  the ticket).
+- opencode and pi agents are not touched by this change; Copilot CLI keeps its pinned version.
 - Claude ACP is out of scope (no version comparison); Kimi ACP was added to the allowlist because it
   is the same binary as Kimi.
 - No per-agent toggle granularity — one global switch only.
 - Automated backend-compatibility testing of new agent versions against CodeMie.
+- `exec()` quoting of the base command in shell mode: split into its own PR.
 - Tests: written on explicit request during PR #576 review (version resolution, version cache,
-  `exec()`, notice/doctor/update/install version paths).
+  registry client, notice/doctor/update/install version paths).
 
 ## Open Risks
 
-- `AGENTS.md` currently describes Copilot CLI as "Analytics ingestion only — never installed or
-  launched by CodeMie," which is stale against the plugin's actual `install()` method and its
-  inclusion in this live-tracking allowlist. Flagged as documentation drift; fixing the guide is out
-  of this ticket's scope.
-- `checkVersionCompatibility()` becoming async may touch every call site's signature — the
-  implementation plan should enumerate all callers explicitly.
-- A cache miss (fresh install, past 24h, or offline) pays one npm lookup of up to 3s per launch;
-  failures are deliberately not cached, so an offline user pays it on every launch.
-- The cache file has no cross-process lock: writes are atomic, so a reader never sees a torn file,
-  but concurrent CLI invocations are last-write-wins (worst case: one extra lookup).
+- `AGENTS.md` describes Copilot CLI as "Analytics ingestion only — never installed or launched by
+  CodeMie," which is stale against the plugin's actual `install()` method. Flagged as documentation
+  drift; fixing the guide is out of this ticket's scope.
+- A cache miss (fresh install, past 24h, or offline) pays one registry request of up to 3s per
+  launch; failures are deliberately not cached, so an offline user pays it on every launch.
+- The cache file has no cross-process lock and isn't written atomically: concurrent CLI invocations
+  are last-write-wins, and a torn file reads as empty (worst case: one extra lookup).
+- Private npm registries that require authentication aren't supported by the direct lookup; for
+  those users the tracked version stays unknown (no notice), which fails safely.
 - Known, pre-existing and out of scope: `codemie update kimi` updates the npm package, not the
   native Kimi binary; a malformed installed version skips the minimum gate; `setup` shows a green
   check for a below-minimum Claude.
