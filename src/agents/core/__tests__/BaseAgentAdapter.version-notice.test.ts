@@ -55,6 +55,17 @@ vi.mock('../../../utils/interactive.js', () => ({
   isNonInteractiveEnvironment: vi.fn(() => false),
 }));
 
+// Tracked version resolves to the metadata value as if confirmed live; flip
+// `isLive` to simulate checks disabled / lookup failure.
+const versionResolution = vi.hoisted(() => ({ isLive: true }));
+vi.mock('../version-resolution.js', () => ({
+  resolveSupportedInstallVersion: vi.fn(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
+  resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
+    version: fallbackSupportedVersion,
+    isLive: versionResolution.isLive,
+  })),
+}));
+
 const metadata = (overrides: Partial<AgentMetadata> = {}): AgentMetadata => ({
   name: 'claude',
   displayName: 'Claude Code',
@@ -83,7 +94,19 @@ async function adapterFor(
 describe('warnOnceIfUntested', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    versionResolution.isLive = true;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('stays silent when the tracked version is unknown (checks off or lookup failed)', async () => {
+    const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
+    versionResolution.isLive = false;
+    const adapter = await adapterFor('2.1.230');
+
+    await adapter.warnOnceIfUntested();
+
+    expect(console.error).not.toHaveBeenCalled();
+    expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
   });
 
   it('stays silent when the installed version is the recommended one', async () => {
@@ -144,7 +167,43 @@ describe('warnOnceIfUntested', () => {
 describe('run() below the minimum supported version', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    versionResolution.isLive = true;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('still refuses to launch when the tracked version is unknown', async () => {
+    versionResolution.isLive = false;
+    const adapter = await adapterFor('2.1.100', { silentMode: true });
+
+    await expect(adapter.run([])).rejects.toThrow(/below the minimum supported version/);
+  });
+
+  it('omits the "Latest tracked version" line when the tracked version is unknown', async () => {
+    versionResolution.isLive = false;
+    const adapter = await adapterFor('2.1.100');
+    vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit called');
+    }) as never);
+
+    await expect(adapter.run([])).rejects.toThrow('process.exit called');
+
+    const printed = vi.mocked(console.error).mock.calls.flat().join('\n');
+    expect(printed).toContain('Minimum required version');
+    expect(printed).not.toContain('Latest tracked version');
+    expect(printed).not.toContain('vlatest');
+  });
+
+  it('resolves version compatibility once and shares it with both checks', async () => {
+    const adapter = await adapterFor('2.1.230');
+    const compatSpy = vi.spyOn(adapter, 'checkVersionCompatibility');
+    const noticeSpy = vi
+      .spyOn(adapter, 'warnOnceIfUntested')
+      .mockRejectedValue(new Error('stop after version checks'));
+
+    await expect(adapter.run([])).rejects.toThrow('stop after version checks');
+
+    expect(compatSpy).toHaveBeenCalledTimes(1);
+    expect(noticeSpy).toHaveBeenCalledWith(await compatSpy.mock.results[0].value);
   });
 
   it('throws in silent mode so ACP callers get a structured error', async () => {

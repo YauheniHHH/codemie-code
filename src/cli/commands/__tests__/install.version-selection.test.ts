@@ -78,6 +78,77 @@ describe('install command version selection', () => {
     );
   });
 
+  it('--supported still installs (the latest release) when the tracked version is unknown', async () => {
+    const installVersion = vi.fn().mockResolvedValue('0.170.0');
+
+    getAgentMock.mockReturnValue({
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
+      metadata: {},
+      isInstalled: vi.fn().mockResolvedValue(true),
+      install: vi.fn().mockResolvedValue(undefined),
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: '0.150.0',
+        compatible: true,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        versionKnown: false,
+      }),
+      getVersion: vi.fn().mockResolvedValue('0.150.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'codex', '--supported']);
+
+    expect(installVersion).toHaveBeenCalledWith('supported');
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('Tracked version unavailable');
+    expect(printed).not.toContain('is already installed');
+  });
+
+  it('a plain install of an installed agent stays a no-op when the tracked version is unknown', async () => {
+    const installVersion = vi.fn();
+    const install = vi.fn();
+
+    getAgentMock.mockReturnValue({
+      name: 'codex',
+      displayName: 'OpenAI Codex CLI',
+      description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
+      metadata: {},
+      isInstalled: vi.fn().mockResolvedValue(true),
+      install,
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: '0.150.0',
+        compatible: true,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        versionKnown: false,
+      }),
+      getVersion: vi.fn().mockResolvedValue('0.150.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'codex']);
+
+    expect(installVersion).not.toHaveBeenCalled();
+    expect(install).not.toHaveBeenCalled();
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('is already installed');
+  });
+
   it('uses the version returned by installVersion() for the success message', async () => {
     const installVersion = vi.fn().mockResolvedValue('2.1.34');
     const getVersion = vi.fn().mockResolvedValue('2.1.33'); // stale — must NOT appear in spinner

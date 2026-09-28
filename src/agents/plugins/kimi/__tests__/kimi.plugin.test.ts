@@ -15,7 +15,7 @@ vi.mock('../../../../utils/native-installer.js', () => ({
 }));
 
 vi.mock('../../../core/version-resolution.js', () => ({
-  resolveSupportedVersion: vi
+  resolveSupportedInstallVersion: vi
     .fn()
     .mockImplementation(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
 }));
@@ -59,6 +59,22 @@ describe('KimiPlugin', () => {
         'kimi',
         KimiPluginMetadata.installerUrls,
         KimiPluginMetadata.supportedVersion,
+        expect.any(Object),
+      );
+    });
+
+    it('installs the latest build when the tracked version is unknown', async () => {
+      const { resolveSupportedInstallVersion } = await import('../../../core/version-resolution.js');
+      vi.mocked(resolveSupportedInstallVersion).mockResolvedValueOnce('latest');
+      const plugin = new KimiPlugin();
+
+      await plugin.installVersion('supported');
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).toHaveBeenCalledWith(
+        'kimi',
+        KimiPluginMetadata.installerUrls,
+        undefined,
         expect.any(Object),
       );
     });

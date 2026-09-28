@@ -8,7 +8,7 @@ import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import { CLI_PACKAGE_NAME } from '../../utils/cli-updater.js';
 import { compareVersions, isValidSemanticVersion, extractVersion } from '../../utils/version-utils.js';
-import { isLiveTrackedAgent, isVersionChecksEnabled, resolveSupportedVersion } from '../../agents/core/version-resolution.js';
+import { isLiveTrackedAgent, isVersionChecksEnabled, resolveSupportedVersionDetailed } from '../../agents/core/version-resolution.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -86,14 +86,20 @@ async function checkAgentForUpdate(
   // Get latest version — allowlisted agents resolve through the live-tracking
   // accessor (24h-cached npm lookup with fail-safe fallback); everyone else
   // (opencode, pi, and any other manageable npm agent) keeps the direct lookup.
-  const latestVersion = isLiveTrackedAgent(agent.name)
-    ? await resolveSupportedVersion({
-        agentName: agent.name,
-        npmPackage,
-        fallbackSupportedVersion: agent.metadata.supportedVersion,
-        forceRefresh: options.forceRefresh,
-      })
-    : await npm.getLatestVersion(npmPackage);
+  // A non-live result (checks off, lookup failed) is the hardcoded fallback —
+  // skip the agent rather than offer an "update" measured against a stale value.
+  let latestVersion: string | null | undefined;
+  if (isLiveTrackedAgent(agent.name)) {
+    const resolved = await resolveSupportedVersionDetailed({
+      agentName: agent.name,
+      npmPackage,
+      fallbackSupportedVersion: agent.metadata.supportedVersion,
+      forceRefresh: options.forceRefresh,
+    });
+    latestVersion = resolved.isLive ? resolved.version : null;
+  } else {
+    latestVersion = await npm.getLatestVersion(npmPackage);
+  }
   if (!latestVersion) {
     return null;
   }
@@ -234,7 +240,7 @@ export function createUpdateCommand(): Command {
         }
 
         // Force-refresh bypasses only the 24h TTL for the package(s) actually being checked
-        // below (scoped per-agent via `resolveSupportedVersion`'s `forceRefresh`) — it never
+        // below (scoped per-agent via `resolveSupportedVersionDetailed`'s `forceRefresh`) — it never
         // wipes the shared cache file, and it's a no-op when version checks are disabled.
         const versionChecksEnabled = await isVersionChecksEnabled();
         const forceRefresh = Boolean(options?.forceRefresh) && versionChecksEnabled;
@@ -266,6 +272,16 @@ export function createUpdateCommand(): Command {
           if (!installed) {
             console.log(chalk.yellow(`${agent.displayName} is not installed`));
             console.log(chalk.cyan(`💡 Install it with: ${getAgentInstallCommand(agent.name)}`));
+            return;
+          }
+
+          if (!versionChecksEnabled && isLiveTrackedAgent(agent.name)) {
+            console.log(
+              chalk.dim(
+                `Version checks are disabled (versionChecks.enabled=false) — skipping the update check for ${agent.displayName}.`
+              )
+            );
+            console.log(chalk.dim(`To install the newest release anyway: codemie install ${agent.name} latest`));
             return;
           }
 
@@ -313,9 +329,19 @@ export function createUpdateCommand(): Command {
         }
 
         // Case 2: Check/update all agents
+        if (!versionChecksEnabled) {
+          console.log(
+            chalk.dim('Version checks are disabled (versionChecks.enabled=false) — live-tracked agents are skipped.\n')
+          );
+        }
         const spinner = ora('Checking for updates...').start();
 
         const results = await checkAllAgentsForUpdates({ forceRefresh });
+
+        if (results.length === 0 && !versionChecksEnabled) {
+          spinner.info('Nothing to check — live-tracked agents are skipped while version checks are disabled');
+          return;
+        }
 
         if (results.length === 0) {
           spinner.info('No updatable agents installed');

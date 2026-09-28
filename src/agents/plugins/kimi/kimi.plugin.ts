@@ -2,7 +2,7 @@ import type { AgentConfig, AgentMetadata, HookTransformer } from '../../core/typ
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
-import { resolveSupportedVersion } from '../../core/version-resolution.js';
+import { resolveSupportedInstallVersion } from '../../core/version-resolution.js';
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
 import { KimiSessionAdapter } from './kimi.session.js';
@@ -336,21 +336,16 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   override async installVersion(version?: string): Promise<string | null> {
-    // Resolve 'supported' to the version from metadata
+    // Resolve 'supported' to the live tracked version. When that's unknown it
+    // resolves to the 'latest' channel, which the native installer takes as undefined.
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
-      const resolved = await resolveSupportedVersion({
+      const resolved = await resolveSupportedInstallVersion({
         agentName: this.metadata.name,
         npmPackage: this.metadata.npmPackage,
         fallbackSupportedVersion: this.metadata.supportedVersion,
       });
-      if (!resolved) {
-        throw new AgentInstallationError(
-          this.metadata.name,
-          'No supported version defined in metadata',
-        );
-      }
-      resolvedVersion = resolved;
+      resolvedVersion = resolved === 'latest' ? undefined : resolved;
       logger.debug('Resolved version', {
         from: 'supported',
         to: resolvedVersion,

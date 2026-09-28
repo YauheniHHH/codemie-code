@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../providers/core/registry.js', () => ({
   ProviderRegistry: {
@@ -35,22 +35,51 @@ vi.mock('../../../../utils/logger.js', () => ({
 }));
 
 // Codex is a live-tracked agent (LIVE_TRACKED_AGENT_NAMES), so
-// checkVersionCompatibility()/installVersion() resolve `supportedVersion` via
-// resolveSupportedVersion(), which hits the npm registry for @openai/codex's
+// checkVersionCompatibility()/installVersion() resolve `supportedVersion`
+// through version-resolution, which hits the npm registry for @openai/codex's
 // current `latest` tag. Without this mock, the tests below made a real
 // network call and asserted against whatever version npm actually returns,
 // so they failed nondeterministically in CI once a newer Codex version
-// shipped. Mocking it to echo back fallbackSupportedVersion pins the tests
-// to CODEX_SUPPORTED_VERSION again, matching kimi.plugin.test.ts's pattern.
+// shipped. The mock echoes back fallbackSupportedVersion (reported as a
+// confirmed live value) to pin the tests to CODEX_SUPPORTED_VERSION again,
+// matching kimi.plugin.test.ts's pattern.
+const versionChecks = vi.hoisted(() => ({ enabled: true }));
 vi.mock('../../../core/version-resolution.js', () => ({
-  resolveSupportedVersion: vi
+  isVersionChecksEnabled: vi.fn(async () => versionChecks.enabled),
+  resolveSupportedInstallVersion: vi
     .fn()
     .mockImplementation(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
+  resolveSupportedVersionDetailed: vi
+    .fn()
+    .mockImplementation(async ({ fallbackSupportedVersion }) => ({
+      version: fallbackSupportedVersion,
+      isLive: true,
+    })),
 }));
 
+// Keep beforeRun's default CODEX_HOME out of the real user home.
+const homeState = vi.hoisted(() => ({ dir: '' }));
+vi.mock('../../../../utils/paths.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../../utils/paths.js')>(
+    '../../../../utils/paths.js'
+  );
+  const { join } = await import('path');
+  return { ...actual, resolveHomeDir: (p: string) => join(homeState.dir, p) };
+});
+
 describe('CodexPlugin version support', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    versionChecks.enabled = true;
+    const { mkdtemp } = await import('fs/promises');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    homeState.dir = await mkdtemp(join(tmpdir(), 'codemie-codex-home-'));
+  });
+
+  afterEach(async () => {
+    const { rm } = await import('fs/promises');
+    await rm(homeState.dir, { recursive: true, force: true });
   });
 
   it('declares the supported and minimum supported Codex CLI versions', async () => {
@@ -164,17 +193,43 @@ describe('CodexPlugin version support', () => {
     expect(env.CODEX_HOME).toMatch(/[/\\]\.codex[/\\]codemie[/\\]home$/);
   });
 
-  it('preserves an explicit CODEX_HOME override', async () => {
+  it('disables Codex self-update checks in the CodeMie-owned CODEX_HOME', async () => {
+    const { readFile } = await import('fs/promises');
+    const { join } = await import('path');
     const { CodexPluginMetadata } = await import('../codex.plugin.js');
 
+    const env = await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
+
+    const toml = await readFile(join(env.CODEX_HOME!, 'config.toml'), 'utf-8');
+    expect(toml).toContain('check_for_update_on_startup = false');
+  });
+
+  it('leaves Codex self-update checks alone when version checks are disabled', async () => {
+    const { existsSync } = await import('fs');
+    const { join } = await import('path');
+    versionChecks.enabled = false;
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+
+    const env = await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
+
+    expect(existsSync(join(env.CODEX_HOME!, 'config.toml'))).toBe(false);
+  });
+
+  it('preserves an explicit CODEX_HOME override and never writes into it', async () => {
+    const { existsSync } = await import('fs');
+    const { join } = await import('path');
+    const { CodexPluginMetadata } = await import('../codex.plugin.js');
+    const customHome = join(homeState.dir, 'custom-codex-home');
+
     const env = await CodexPluginMetadata.lifecycle!.beforeRun!(
-      { CODEX_HOME: '/tmp/custom-codex-home' },
+      { CODEX_HOME: customHome },
       {
         provider: 'ai-run-sso',
         model: 'gpt-5.5-2026-04-24',
       }
     );
 
-    expect(env.CODEX_HOME).toBe('/tmp/custom-codex-home');
+    expect(env.CODEX_HOME).toBe(customHome);
+    expect(existsSync(join(customHome, 'config.toml'))).toBe(false);
   });
 });
