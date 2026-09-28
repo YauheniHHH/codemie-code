@@ -24,8 +24,9 @@ import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 import { VersionWarningStore } from '../../../utils/version-warnings.js';
-import { clearVersionCache } from '../../../utils/version-cache.js';
-import { isVersionChecksEnabled } from '../../../agents/core/version-resolution.js';
+import { refreshCachedLatestVersion } from '../../../utils/version-cache.js';
+import { isLiveTrackedAgent, isVersionChecksEnabled } from '../../../agents/core/version-resolution.js';
+import { AgentRegistry } from '../../../agents/registry.js';
 import { renderTip } from '../../../utils/tips.js';
 
 export function createDoctorCommand(): Command {
@@ -34,8 +35,8 @@ export function createDoctorCommand(): Command {
   command
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-    .option('--reset-version-warnings', 'Show agent version recommendations again on next launch')
-    .option('--refresh-versions', 'Force a fresh agent version check (bypasses the 24h cache)')
+    .option('--reset-version-warnings', 'Show agent version notices again on next launch')
+    .option('--refresh-versions', 'Re-check tracked agent versions against npm now (bypasses the 24h cache)')
     .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean; refreshVersions?: boolean }) => {
       if (options.resetVersionWarnings) {
         const { removed } = await VersionWarningStore.clear();
@@ -44,8 +45,25 @@ export function createDoctorCommand(): Command {
 
       if (options.refreshVersions) {
         if (await isVersionChecksEnabled()) {
-          const { removed } = await clearVersionCache();
-          console.log(chalk.blueBright(`Cleared version cache — ${removed} entries removed.\n`));
+          // Refresh each tracked package in place (bypassing only the 24h TTL). A failed
+          // lookup keeps that package's existing entry rather than losing it.
+          const packages = [
+            ...new Set(
+              AgentRegistry.getAllAgents()
+                .filter((agent) => isLiveTrackedAgent(agent.name))
+                .map((agent) => agent.metadata.npmPackage)
+                .filter((pkg): pkg is string => Boolean(pkg))
+            ),
+          ];
+          const results = await Promise.all(packages.map((pkg) => refreshCachedLatestVersion(pkg)));
+          const failed = results.filter((ok) => !ok).length;
+          console.log(
+            chalk.blueBright(`Refreshed agent versions — ${packages.length - failed}/${packages.length} checked against npm.`)
+          );
+          if (failed > 0) {
+            console.log(chalk.yellow(`  ${failed} lookup(s) failed; their previous cached values were kept.`));
+          }
+          console.log();
         } else {
           console.log(
             chalk.dim('Version checks are disabled (versionChecks.enabled=false) — --refresh-versions is a no-op.\n')
