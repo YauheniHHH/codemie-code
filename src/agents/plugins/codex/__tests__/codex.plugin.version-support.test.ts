@@ -34,6 +34,12 @@ vi.mock('../../../../utils/logger.js', () => ({
   },
 }));
 
+vi.mock('../../../core/version-resolution.js', () => ({
+  resolveSupportedVersion: vi
+    .fn()
+    .mockImplementation(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
+}));
+
 describe('CodexPlugin version support', () => {
   beforeEach(() => {
     vi.clearAllMocks();
