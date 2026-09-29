@@ -81,14 +81,21 @@ async function saveCache(cache: CacheFile): Promise<void> {
  * current); failures aren't cached, so the next call retries.
  *
  * @param packageName - npm package name, e.g. `@openai/codex`
+ * @param options.bypassCache - skip a fresh cache entry and always fetch (the result is still
+ *   written back), for explicit user-requested checks such as `codemie update`
  * @returns the version string, or `null` when no current value is available
  */
-export async function getCachedLatestVersion(packageName: string): Promise<string | null> {
-  const cache = await loadCache();
-  const entry = cache.packages[packageName];
-  const ageMs = entry ? Date.now() - Date.parse(entry.fetchedAt) : NaN;
-  // A future fetchedAt (clock skew, hand-edited file) must not count as fresh forever.
-  if (entry && ageMs >= 0 && ageMs < TTL_MS) return entry.version;
+export async function getCachedLatestVersion(
+  packageName: string,
+  options: { bypassCache?: boolean } = {}
+): Promise<string | null> {
+  if (!options.bypassCache) {
+    const cache = await loadCache();
+    const entry = cache.packages[packageName];
+    const ageMs = entry ? Date.now() - Date.parse(entry.fetchedAt) : NaN;
+    // A future fetchedAt (clock skew, hand-edited file) must not count as fresh forever.
+    if (entry && ageMs >= 0 && ageMs < TTL_MS) return entry.version;
+  }
 
   const fetched = await fetchLatestVersionFromRegistry(packageName, { timeoutMs: FETCH_TIMEOUT_MS });
   const version = fetched?.trim();

@@ -53,7 +53,8 @@ version from the npm registry (`src/utils/npm-registry.ts`). A failed lookup (ti
 non-200, or a response that isn't a version string) returns `null`, never the expired entry, and is
 logged with `logger.warn` (log file only). Failures are not cached, so the next call retries. A failed
 cache write still returns the fetched value; malformed or torn cache files read as empty, and the next
-successful write replaces them.
+successful write replaces them. A `bypassCache` option skips a fresh entry and always fetches (still
+writing the result back); `codemie update` uses it, because the user explicitly asked to check now.
 
 The registry is queried directly (one HTTPS GET of `<registry>/<name>/latest`, 3s limit) rather than
 by spawning `npm view`: measured on a Windows laptop, `npm view` took 2.5–3.8s per package and ~4s
@@ -177,7 +178,7 @@ Once the number follows npm rather than a hand-tested pin, every string that say
 - New `codemie doctor` features. `doctor` already compares versions on `main` (#553) through the
   shared gate, so it follows the tracked version automatically; there is no forced-refresh flag.
 - Forced cache refresh flags for `doctor` or `update` (dropped in PR #576 review; not asked for by
-  the ticket).
+  the ticket). `codemie update` always fetches fresh instead, with no flag.
 - opencode and pi agents are not touched by this change; Copilot CLI keeps its pinned version.
 - Claude ACP is out of scope (no version comparison); Kimi ACP was added to the allowlist because it
   is the same binary as Kimi.

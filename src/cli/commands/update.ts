@@ -80,14 +80,16 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Live-tracked agents use the cached tracked version; others (opencode, pi) query npm
-  // directly. A non-live result is the stale fallback, so skip rather than offer it.
+  // Live-tracked agents go through the tracked-version resolver (fetched fresh — the user asked
+  // to check now — and written back to the cache); others (opencode, pi) query npm directly.
+  // A non-current result is the stale fallback, so skip rather than offer it.
   let latestVersion: string | null | undefined;
   if (isLiveTrackedAgent(agent.name)) {
     const resolved = await resolveSupportedVersionDetailed({
       agentName: agent.name,
       npmPackage,
       fallbackSupportedVersion: agent.metadata.supportedVersion,
+      bypassCache: true,
     });
     latestVersion = resolved.isCurrent ? resolved.version : null;
   } else {

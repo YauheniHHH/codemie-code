@@ -355,17 +355,17 @@ describe('createUpdateCommand', () => {
     expect(agent.installVersion).not.toHaveBeenCalled();
   });
 
-  it('answers a repeat check from the 24h cache instead of the registry', async () => {
+  it('queries the registry on every explicit check, bypassing a fresh cache entry', async () => {
     registryMock.getAgent.mockReturnValue(liveTrackedAgent('@codemie-test/cached') as never);
     npmMock.getLatestVersion.mockResolvedValue('2.0.0');
     await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
 
-    // A newer registry value must not be seen while the cached entry is fresh.
+    // A release published after the first check must be seen right away, not after 24h.
     npmMock.getLatestVersion.mockResolvedValue('3.0.0');
     await createUpdateCommand().parseAsync(['codex', '--check'], { from: 'user' });
 
-    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(1);
-    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('2.0.0'));
+    expect(npmMock.getLatestVersion).toHaveBeenCalledTimes(2);
+    expect(spinner.succeed).toHaveBeenLastCalledWith(expect.stringContaining('3.0.0'));
   });
 
   it('updates a specific npm-based agent via installGlobal with force:true', async () => {
