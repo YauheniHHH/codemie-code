@@ -16,6 +16,18 @@ export function isLiveTrackedAgent(agentName: string): boolean {
   return (LIVE_TRACKED_AGENT_NAMES as readonly string[]).includes(agentName);
 }
 
+/**
+ * Whether a live-tracked agent is installed ahead of its tracked version. That usually means it
+ * self-updated since the (up to 24h old) cached lookup, so advising `install --supported` there
+ * would suggest a downgrade; the launch notice and `codemie doctor` stay quiet instead.
+ *
+ * @param agentName - agent metadata `name`
+ * @param compat - the agent's version compatibility result
+ */
+export function isAheadOfLiveTracking(agentName: string, compat: { isNewer?: boolean }): boolean {
+  return Boolean(compat.isNewer) && isLiveTrackedAgent(agentName);
+}
+
 export interface ResolveSupportedVersionInput {
   agentName: string;
   npmPackage?: string | null;

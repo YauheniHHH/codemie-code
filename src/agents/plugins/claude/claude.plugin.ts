@@ -666,9 +666,12 @@ export class ClaudePlugin extends BaseAgentAdapter {
       return versionMatch ? versionMatch[1] : fullPathOutput;
     }
 
-    // Fall back to command in PATH (works for npm installations, Windows, etc.)
+    // Fall back to command in PATH (works for npm installations, Windows, etc.). On Windows an
+    // npm install is a .cmd shim, which spawn() can only run through a shell.
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
 
       // Parse version from output like '2.1.23 (Claude Code)'
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);

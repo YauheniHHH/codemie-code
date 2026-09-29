@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
@@ -16,6 +16,14 @@ vi.mock('../../../core/version-resolution.js', () => ({
   resolveSupportedVersionDetailed: vi.fn(async () => ({ version: LIVE_VERSION, isCurrent: true })),
   isVersionChecksEnabled: vi.fn(async () => true),
 }));
+
+const execMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../../utils/processes.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../../utils/processes.js')>(
+    '../../../../utils/processes.js'
+  );
+  return { ...actual, exec: execMock };
+});
 
 import { ClaudePlugin, ClaudePluginMetadata } from '../claude.plugin.js';
 import { installNativeAgent } from '../../../../utils/native-installer.js';
@@ -68,5 +76,21 @@ describe('ClaudePlugin.installVersion', () => {
       '2.1.250',
       expect.any(Object)
     );
+  });
+});
+
+describe('ClaudePlugin.getVersion', () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  it('runs the PATH fallback through a shell on Windows, where an npm install is a .cmd shim', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    execMock.mockResolvedValue({ code: 0, stdout: '2.1.284 (Claude Code)', stderr: '' });
+
+    await expect(new ClaudePlugin().getVersion()).resolves.toBe('2.1.284');
+    expect(execMock).toHaveBeenCalledWith('claude', ['--version'], expect.objectContaining({ shell: true }));
   });
 });

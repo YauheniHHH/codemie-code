@@ -327,9 +327,12 @@ export class KimiPlugin extends BaseAgentAdapter {
       }
     }
 
-    // Fall back to command in PATH
+    // Fall back to command in PATH. On Windows an npm install is a .cmd shim, which spawn() can
+    // only run through a shell (same as Codex and Gemini).
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this.metadata.cliCommand, ['--version'], {
+        shell: process.platform === 'win32',
+      });
       return parseVersion(result.stdout);
     } catch {
       return null;
