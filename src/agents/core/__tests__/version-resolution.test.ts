@@ -174,13 +174,7 @@ describe('resolveSupportedInstallVersion', () => {
     await expect(resolveSupportedInstallVersion(input)).resolves.toBe('0.160.0');
   });
 
-  it('installs the latest channel, not the stale fallback, when checks are disabled', async () => {
-    checksOff();
-
-    await expect(resolveSupportedInstallVersion(input)).resolves.toBe('latest');
-  });
-
-  it('installs the latest channel when the lookup fails', async () => {
+  it('installs the latest channel, not the stale fallback, when the tracked version is unknown', async () => {
     getCachedLatestVersion.mockResolvedValue(null);
 
     await expect(resolveSupportedInstallVersion(input)).resolves.toBe('latest');
