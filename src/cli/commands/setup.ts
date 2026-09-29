@@ -786,11 +786,11 @@ async function checkAndInstallClaude(): Promise<void> {
             // Installed version is ahead of CodeMie's tracked baseline — not "a newer
             // version is available" (that framing points at the wrong, older version below).
             console.log();
-            console.log(chalk.yellow(`⚠ Claude Code v${compat.installedVersion} is installed`));
-            console.log(chalk.yellow(`  This is ahead of the tracked v${compat.supportedVersion}`));
+            console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
+            console.log(chalk.yellow(`   This is ahead of the tracked v${compat.supportedVersion}`));
             console.log();
-            console.log(chalk.white('  To install the tracked version:'));
-            console.log(chalk.blueBright('  codemie install claude --supported'));
+            console.log(chalk.white('   To install the tracked version:'));
+            console.log(chalk.blueBright('   codemie install claude --supported'));
             console.log();
           } else if (compat.compatible) {
             // Version is compatible (same or older than supported)
