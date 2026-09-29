@@ -34,7 +34,7 @@ import { isNonInteractiveEnvironment } from '../../utils/interactive.js';
 import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 import {
-  isLiveTrackedAgent,
+  isAheadOfLiveTracking,
   resolveSupportedInstallVersion,
   resolveSupportedVersionDetailed,
 } from './version-resolution.js';
@@ -428,9 +428,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (!installedVersion || installedVersion === supportedVersion) {
         return;
       }
-      // A live-tracked agent ahead of the tracked version has usually self-updated since the
-      // (up to 24h old) cached lookup; advising `--supported` would suggest a downgrade.
-      if (compat.isNewer && isLiveTrackedAgent(this.metadata.name)) {
+      if (isAheadOfLiveTracking(this.metadata.name, compat)) {
         return;
       }
 

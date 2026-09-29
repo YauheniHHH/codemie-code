@@ -59,7 +59,10 @@ vi.mock('../../../utils/interactive.js', () => ({
 // `isCurrent` to simulate checks disabled / lookup failure.
 const versionResolution = vi.hoisted(() => ({ isCurrent: true, liveVersion: undefined as string | undefined }));
 vi.mock('../version-resolution.js', () => ({
-  isLiveTrackedAgent: vi.fn((name: string) => ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'].includes(name)),
+  isAheadOfLiveTracking: vi.fn(
+    (name: string, compat: { isNewer?: boolean }) =>
+      Boolean(compat.isNewer) && ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'].includes(name)
+  ),
   resolveSupportedInstallVersion: vi.fn(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
   resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
     version: versionResolution.liveVersion ?? fallbackSupportedVersion,
