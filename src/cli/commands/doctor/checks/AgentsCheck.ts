@@ -9,6 +9,7 @@
 
 import { AgentRegistry } from '../../../../agents/registry.js';
 import { AgentAdapter } from '../../../../agents/core/types.js';
+import { isLiveTrackedAgent } from '../../../../agents/core/version-resolution.js';
 import { ItemWiseHealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class AgentsCheck implements ItemWiseHealthCheck {
@@ -57,7 +58,10 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       };
     }
 
-    if (compat.versionKnown !== false && version !== compat.supportedVersion) {
+    // A live-tracked agent ahead of the (cached) tracked version has usually self-updated;
+    // hinting `--supported` there would suggest a downgrade.
+    const aheadOfLiveTracking = compat.isNewer && isLiveTrackedAgent(agent.name);
+    if (compat.versionKnown !== false && !aheadOfLiveTracking && version !== compat.supportedVersion) {
       return {
         status: 'warn',
         message: `${agent.displayName}${versionStr} - CodeMie is tracking v${compat.supportedVersion}`,
