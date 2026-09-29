@@ -20,6 +20,8 @@ export interface ResolveSupportedVersionInput {
   agentName: string;
   npmPackage?: string | null;
   fallbackSupportedVersion?: string;
+  /** Always query the registry instead of a fresh cache entry (explicit `codemie update`). */
+  bypassCache?: boolean;
 }
 
 /**
@@ -60,7 +62,10 @@ export async function isVersionChecksEnabled(workingDir: string = process.cwd())
 const PRERELEASE_SUFFIX_PATTERN = /\d+\.\d+\.\d+[-+]/;
 
 export interface ResolvedSupportedVersion {
-  /** Version to install or display; the metadata fallback when no live value is available. */
+  /**
+   * The tracked version. Only meaningful when `isCurrent` is true; otherwise it carries the
+   * metadata value, which callers must not install, display or compare against.
+   */
   version: string | undefined;
   /**
    * Whether `version` can be treated as the current tracked version: a successful (possibly
@@ -82,7 +87,7 @@ export interface ResolvedSupportedVersion {
 export async function resolveSupportedVersionDetailed(
   input: ResolveSupportedVersionInput
 ): Promise<ResolvedSupportedVersion> {
-  const { agentName, npmPackage, fallbackSupportedVersion } = input;
+  const { agentName, npmPackage, fallbackSupportedVersion, bypassCache } = input;
   const fallback: ResolvedSupportedVersion = { version: fallbackSupportedVersion, isCurrent: false };
 
   if (!(await isVersionChecksEnabled())) {
@@ -94,7 +99,7 @@ export async function resolveSupportedVersionDetailed(
   }
 
   try {
-    const live = await getCachedLatestVersion(npmPackage);
+    const live = await getCachedLatestVersion(npmPackage, { bypassCache });
     if (live && PRERELEASE_SUFFIX_PATTERN.test(live)) {
       logger.debug('[resolveSupportedVersion] live version looks like a prerelease, using fallback', {
         agentName,
