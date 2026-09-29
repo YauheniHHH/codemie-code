@@ -11,8 +11,11 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 type NpmConfig = Record<string, string>;
 
-// Minimal .npmrc reader: `key=value` lines, `#`/`;` comments, `${VAR}` expansion.
-function readNpmrc(file: string): NpmConfig {
+// Minimal .npmrc reader: `key=value` lines, `#`/`;` comments, optional surrounding quotes, and
+// `${VAR}` expansion when `expandEnv` is set. Expansion is off for a project .npmrc (a value that
+// needs it is skipped): the lookup runs on every agent launch, so a checked-out repo must not be
+// able to route env secrets (e.g. `registry=https://host/${TOKEN}/`) to a host of its choosing.
+function readNpmrc(file: string, expandEnv: boolean): NpmConfig {
   if (!existsSync(file)) return {};
   const config: NpmConfig = {};
   try {
@@ -22,10 +25,15 @@ function readNpmrc(file: string): NpmConfig {
       const eq = line.indexOf('=');
       if (eq <= 0) continue;
       const key = line.slice(0, eq).trim();
-      const value = line
-        .slice(eq + 1)
-        .trim()
-        .replace(/\$\{([^}]+)\}/g, (_, name: string) => process.env[name] ?? '');
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.endsWith(value[0])) {
+        value = value.slice(1, -1);
+      }
+      if (expandEnv) {
+        value = value.replace(/\$\{([^}]+)\}/g, (_, name: string) => process.env[name] ?? '');
+      } else if (/\$\{[^}]+\}/.test(value)) {
+        continue;
+      }
       config[key] = value;
     }
   } catch {
@@ -42,7 +50,7 @@ function npmSetting(config: NpmConfig, key: string): string | undefined {
 
 function loadNpmConfig(cwd: string): NpmConfig {
   const userConfig = process.env.npm_config_userconfig || process.env.NPM_CONFIG_USERCONFIG || join(homedir(), '.npmrc');
-  return { ...readNpmrc(userConfig), ...readNpmrc(join(cwd, '.npmrc')) };
+  return { ...readNpmrc(userConfig, true), ...readNpmrc(join(cwd, '.npmrc'), false) };
 }
 
 /** The registry npm would use for this package, honoring `@scope:registry` and `registry`. */
