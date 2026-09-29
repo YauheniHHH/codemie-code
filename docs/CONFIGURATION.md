@@ -248,13 +248,6 @@ The same switch can be set in `~/.codemie/codemie-cli.config.json` (all projects
 
 Precedence: the env var, then the project setting, then the global one. Only an explicit `false` turns checks off.
 
-While checks are on, CodeMie also switches off the agents' own self-updaters, so they don't replace the installed version behind its back:
-
-- **Codex:** `check_for_update_on_startup = false` in CodeMie's own Codex home (`~/.codex/codemie/home/config.toml`). A `CODEX_HOME` you set yourself is never touched.
-- **Gemini:** `"general": { "enableAutoUpdate": false }` in `~/.gemini/settings.json`. This file is shared with standalone `gemini`, so its auto-update is off there too.
-
-Both are added only if you haven't set them already, and they stay after you turn checks off. CodeMie can't tell its value from one you set, so it never removes it. To get the agent's own auto-update back, delete the key or set it to `true`.
-
 #### Security & File Access
 
 | Variable | Description | Example |
