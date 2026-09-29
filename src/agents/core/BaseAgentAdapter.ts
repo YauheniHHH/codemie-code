@@ -35,7 +35,11 @@ import { VersionWarningStore } from '../../utils/version-warnings.js';
 import { getCurrentCliVersion } from '../../utils/cli-updater.js';
 import { applySystemProxyEnvironment } from '../../utils/system-proxy.js';
 import { installSystemProxyDispatcher } from '../../utils/system-proxy-dispatcher.js';
-import { resolveSupportedInstallVersion, resolveSupportedVersionDetailed } from './version-resolution.js';
+import {
+  isLiveTrackedAgent,
+  resolveSupportedInstallVersion,
+  resolveSupportedVersionDetailed,
+} from './version-resolution.js';
 
 /**
  * Base class for all agent adapters
@@ -425,6 +429,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
       const { installedVersion, supportedVersion } = compat;
       if (!installedVersion || installedVersion === supportedVersion) {
+        return;
+      }
+      // A live-tracked agent ahead of the tracked version has usually self-updated since the
+      // (up to 24h old) cached lookup; advising `--supported` would suggest a downgrade.
+      if (compat.isNewer && isLiveTrackedAgent(this.metadata.name)) {
         return;
       }
 

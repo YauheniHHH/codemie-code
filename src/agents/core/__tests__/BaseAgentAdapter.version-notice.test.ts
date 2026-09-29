@@ -59,6 +59,7 @@ vi.mock('../../../utils/interactive.js', () => ({
 // `isCurrent` to simulate checks disabled / lookup failure.
 const versionResolution = vi.hoisted(() => ({ isCurrent: true, liveVersion: undefined as string | undefined }));
 vi.mock('../version-resolution.js', () => ({
+  isLiveTrackedAgent: vi.fn((name: string) => ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'].includes(name)),
   resolveSupportedInstallVersion: vi.fn(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
   resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
     version: versionResolution.liveVersion ?? fallbackSupportedVersion,
@@ -134,6 +135,28 @@ describe('warnOnceIfUntested', () => {
     expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
   });
 
+  it('does not advise a downgrade when a live-tracked agent is ahead of the cached tracked version', async () => {
+    const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
+    const adapter = await adapterFor('2.1.230');
+
+    await adapter.warnOnceIfUntested();
+
+    expect(console.error).not.toHaveBeenCalled();
+    expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
+  });
+
+  it('still notices an agent outside live tracking that is ahead of its pinned version', async () => {
+    const adapter = await adapterFor('1.0.90', {
+      name: 'copilot-cli',
+      supportedVersion: '1.0.83',
+      minimumSupportedVersion: '1.0.79',
+    });
+
+    await adapter.warnOnceIfUntested();
+
+    expect(console.error).toHaveBeenCalled();
+  });
+
   it('stays silent when the installed version is the recommended one', async () => {
     const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
     const adapter = await adapterFor('2.1.218');
@@ -146,14 +169,14 @@ describe('warnOnceIfUntested', () => {
 
   it('notices a mismatch once and records the baseline it was acknowledged against', async () => {
     const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
-    const adapter = await adapterFor('2.1.230');
+    const adapter = await adapterFor('2.1.212');
 
     await adapter.warnOnceIfUntested();
 
     expect(console.error).toHaveBeenCalled();
     expect(VersionWarningStore.recordWarning).toHaveBeenCalledWith(
       'claude',
-      '2.1.230',
+      '2.1.212',
       '2.1.218',
       '0.15.1'
     );
@@ -162,7 +185,7 @@ describe('warnOnceIfUntested', () => {
   it('stays silent once the pair is already acknowledged', async () => {
     const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
     vi.mocked(VersionWarningStore.hasWarned).mockResolvedValue(true);
-    const adapter = await adapterFor('2.1.230');
+    const adapter = await adapterFor('2.1.212');
 
     await adapter.warnOnceIfUntested();
 
@@ -171,7 +194,7 @@ describe('warnOnceIfUntested', () => {
   });
 
   it('writes no banner in silent mode, so the JSON-RPC stream stays clean', async () => {
-    const adapter = await adapterFor('2.1.230', { silentMode: true });
+    const adapter = await adapterFor('2.1.212', { silentMode: true });
 
     await adapter.warnOnceIfUntested();
 
@@ -182,7 +205,7 @@ describe('warnOnceIfUntested', () => {
     const { VersionWarningStore } = await import('../../../utils/version-warnings.js');
     vi.mocked(VersionWarningStore.hasWarned).mockRejectedValue(new Error('EACCES'));
     vi.mocked(VersionWarningStore.recordWarning).mockRejectedValue(new Error('EACCES'));
-    const adapter = await adapterFor('2.1.230');
+    const adapter = await adapterFor('2.1.212');
 
     await expect(adapter.warnOnceIfUntested()).resolves.toBeUndefined();
     expect(console.error).toHaveBeenCalled();
