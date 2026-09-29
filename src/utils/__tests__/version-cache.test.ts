@@ -79,12 +79,12 @@ describe('getCachedLatestVersion', () => {
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
     expect(warn).toHaveBeenCalledWith(
-      '[version-cache] failed to persist fetched version',
+      '[version-cache] failed to persist lookup result',
       expect.objectContaining({ packageName: PKG })
     );
   });
 
-  it('treats a registry answer that is not a version as a failure and does not cache it', async () => {
+  it('treats a registry answer that is not a version as a failure, never as a cached version', async () => {
     fetchLatest.mockResolvedValue('<html>proxy login</html>');
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
@@ -92,7 +92,8 @@ describe('getCachedLatestVersion', () => {
       '[version-cache] live version lookup failed',
       expect.objectContaining({ reason: 'unparsable registry response' })
     );
-    await expect(readFile(cacheFile(), 'utf-8')).rejects.toThrow();
+    const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
+    expect(saved.packages[PKG]).toBeUndefined();
   });
 
   it('passes a prerelease string through unchanged so the resolver can reject it', async () => {
@@ -115,11 +116,29 @@ describe('getCachedLatestVersion', () => {
     expect(saved.packages[PKG].version).toBe('0.160.0');
   });
 
-  it('does not cache a failure, so the next call retries', async () => {
+  it('skips lookups for 10 minutes after a failure, then retries', async () => {
     fetchLatest.mockResolvedValueOnce(null).mockResolvedValueOnce('0.160.0');
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
+    // A launch right after the failure doesn't wait for the registry again.
+    await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
+    expect(fetchLatest).toHaveBeenCalledTimes(1);
+
+    // Age the recorded failure past the backoff window.
+    const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
+    saved.failures[PKG] = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    await writeFile(cacheFile(), JSON.stringify(saved), 'utf-8');
+
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
+    expect(fetchLatest).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await readFile(cacheFile(), 'utf-8')).failures[PKG]).toBeUndefined();
+  });
+
+  it('retries right away after a failure when the caller bypasses the cache', async () => {
+    fetchLatest.mockResolvedValueOnce(null).mockResolvedValueOnce('0.160.0');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
+    await expect(getCachedLatestVersion(PKG, { bypassCache: true })).resolves.toBe('0.160.0');
     expect(fetchLatest).toHaveBeenCalledTimes(2);
   });
 });
