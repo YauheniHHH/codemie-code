@@ -458,9 +458,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // the only channel there.
       if (!this.metadata.silentMode && !isNonInteractiveEnvironment()) {
         console.error();
-        console.error(chalk.yellow(`⚠ ${notice}`));
-        console.error(chalk.white('  Continuing. To switch to the tracked version, run:'));
-        console.error(chalk.blueBright(`    codemie install ${this.name} --supported`));
+        console.error(chalk.yellow(`⚠  ${notice}`));
+        console.error(chalk.white('   Continuing. To switch to the tracked version, run:'));
+        console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
         console.error();
       }
 
@@ -527,7 +527,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.error();
     console.error(chalk.white('  This version is known to be incompatible with CodeMie.'));
     console.error(chalk.white('  Upgrade with:'));
-    console.error(chalk.blueBright(`    codemie install ${this.name} --supported`));
+    console.error(chalk.blueBright(`     codemie install ${this.name} --supported`));
     console.error();
     process.exit(1);
   }
