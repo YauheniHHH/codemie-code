@@ -62,7 +62,9 @@ each when run in parallel, so the original 3s limit was routinely exceeded and t
 nothing. The direct request takes well under a second. It honors npm's `registry` and `@scope:registry`
 settings (env var, project `.npmrc`, user `.npmrc`) and `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`, plus
 npm's `https-proxy`/`proxy`. Registries that require authentication aren't supported; those lookups
-fail safely.
+fail safely. `${VAR}` references are expanded only in the user `.npmrc`; a project `.npmrc` value that
+contains one is ignored, so a checked-out repo can't route env secrets to a host of its choosing on
+agent launch.
 
 ### 2. `supportedVersion` becomes live-tracked, uniformly, for an explicit allowlist
 
@@ -126,6 +128,11 @@ When disabled there are no network calls from any gated flow:
 unchanged. Because the resolver only produces a new value when npm's reported version actually
 changes, a same-value cache refresh returns the identical string and the existing dedup logic in
 `version-warnings.ts` naturally stays silent — no code change needed there.
+
+A live-tracked agent whose installed version is *ahead of* the tracked one has usually self-updated
+since the (up to 24h old) cached lookup, so the launch notice, `codemie setup` and `codemie doctor`
+don't advise `install --supported` there — that would suggest a downgrade. Agents with a pinned
+version (Copilot CLI) keep the notice when ahead, as before.
 
 ### 5. UI copy
 

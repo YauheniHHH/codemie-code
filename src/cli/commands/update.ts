@@ -31,10 +31,16 @@ interface UpdateCheckResult {
   npmPackage: string;
 }
 
+// Returned when an installed agent could not be checked because its latest-version lookup
+// failed (offline, registry error, timeout) — as opposed to `null`: nothing to check.
+const LOOKUP_FAILED = 'lookup-failed' as const;
+
 /**
  * Check a single agent for available updates
  */
-async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResult | null> {
+async function checkAgentForUpdate(
+  agent: AgentAdapter
+): Promise<UpdateCheckResult | typeof LOOKUP_FAILED | null> {
   // Check if installed
   const installed = await agent.isInstalled();
   if (!installed) {
@@ -54,7 +60,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     if (!cliVersion) return null;
 
     const latestVersion = await npm.getLatestVersion(CLI_PACKAGE_NAME);
-    if (!latestVersion) return null;
+    if (!latestVersion) return LOOKUP_FAILED;
 
     // Validate both versions before comparing
     if (!isValidSemanticVersion(cliVersion) || !isValidSemanticVersion(latestVersion)) {
@@ -85,6 +91,10 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
   // A non-current result is the stale fallback, so skip rather than offer it.
   let latestVersion: string | null | undefined;
   if (isLiveTrackedAgent(agent.name)) {
+    // Skipped on purpose while checks are off (the caller explains it) — not a failed lookup.
+    if (!(await isVersionChecksEnabled())) {
+      return null;
+    }
     const resolved = await resolveSupportedVersionDetailed({
       agentName: agent.name,
       npmPackage,
@@ -96,7 +106,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     latestVersion = await npm.getLatestVersion(npmPackage);
   }
   if (!latestVersion) {
-    return null;
+    return LOOKUP_FAILED;
   }
 
   // Extract clean versions for comparison and display
@@ -123,24 +133,28 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
 }
 
 /**
- * Check all installed agents for updates
+ * Check all installed agents for updates. `unchecked` lists the installed agents whose
+ * latest-version lookup failed, so they are reported rather than silently dropped.
  */
-async function checkAllAgentsForUpdates(): Promise<UpdateCheckResult[]> {
+async function checkAllAgentsForUpdates(): Promise<{ results: UpdateCheckResult[]; unchecked: string[] }> {
   const agents = AgentRegistry.getManageableAgents();
   const results: UpdateCheckResult[] = [];
+  const unchecked: string[] = [];
 
   // Check all agents in parallel
   const checks = await Promise.all(
-    agents.map(agent => checkAgentForUpdate(agent))
+    agents.map(async agent => ({ agent, result: await checkAgentForUpdate(agent) }))
   );
 
-  for (const result of checks) {
-    if (result) {
+  for (const { agent, result } of checks) {
+    if (result === LOOKUP_FAILED) {
+      unchecked.push(agent.displayName);
+    } else if (result) {
       results.push(result);
     }
   }
 
-  return results;
+  return { results, unchecked };
 }
 
 /**
@@ -271,7 +285,7 @@ export function createUpdateCommand(): Command {
 
           const result = await checkAgentForUpdate(agent);
 
-          if (!result) {
+          if (!result || result === LOOKUP_FAILED) {
             spinner.warn(`Could not check ${agent.displayName} for updates`);
             return;
           }
@@ -318,7 +332,18 @@ export function createUpdateCommand(): Command {
         }
         const spinner = ora('Checking for updates...').start();
 
-        const results = await checkAllAgentsForUpdates();
+        const { results, unchecked } = await checkAllAgentsForUpdates();
+        const reportUnchecked = (): void => {
+          for (const name of unchecked) {
+            console.log(chalk.yellow(`⚠ Could not check ${name} for updates`));
+          }
+        };
+
+        if (results.length === 0 && unchecked.length > 0) {
+          spinner.stop();
+          reportUnchecked();
+          return;
+        }
 
         if (results.length === 0 && !versionChecksEnabled) {
           spinner.info('Nothing to check — live-tracked agents are skipped while version checks are disabled');
@@ -336,6 +361,7 @@ export function createUpdateCommand(): Command {
 
         // Display status
         displayUpdateStatus(results);
+        reportUnchecked();
 
         // Filter to agents with updates
         const outdated = results.filter(r => r.hasUpdate);

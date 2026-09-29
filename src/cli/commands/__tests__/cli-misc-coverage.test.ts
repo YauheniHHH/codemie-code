@@ -342,6 +342,16 @@ describe('createUpdateCommand', () => {
     };
   }
 
+  it('reports an installed agent whose lookup failed instead of "No updatable agents installed"', async () => {
+    registryMock.getManageableAgents.mockReturnValue([liveTrackedAgent('@codemie-test/all-offline')] as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    await createUpdateCommand().parseAsync([], { from: 'user' });
+
+    expect(captured()).toContain('Could not check OpenAI Codex CLI for updates');
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+  });
+
   it('never offers the hardcoded fallback as an update when the live lookup fails', async () => {
     const agent = liveTrackedAgent('@codemie-test/lookup-fails');
     registryMock.getAgent.mockReturnValue(agent as never);
