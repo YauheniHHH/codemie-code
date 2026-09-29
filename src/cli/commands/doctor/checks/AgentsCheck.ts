@@ -43,9 +43,7 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       return deprecationWarning;
     }
 
-    if (!version || !agent.checkVersionCompatibility || !agent.metadata.supportedVersion) {
-      // No configured version target (e.g. the built-in agent, whose version
-      // ships pinned to the CodeMie CLI release) — nothing to compare against.
+    if (!version || !agent.checkVersionCompatibility) {
       return { status: 'ok', message: `${agent.displayName}${versionStr}` };
     }
 
