@@ -51,9 +51,11 @@ New module `src/utils/version-cache.ts` exposing `getCachedLatestVersion(package
 `fetchedAt` (a `fetchedAt` in the future counts as stale). On a miss it reads the package's `latest`
 version from the npm registry (`src/utils/npm-registry.ts`). A failed lookup (timeout, network,
 non-200, or a response that isn't a version string) returns `null`, never the expired entry, and is
-logged with `logger.warn` (log file only). Failures are not cached, so the next call retries. A failed
+logged with `logger.warn` (log file only). The failure time is recorded, and lookups for that package
+are skipped (returning `null`) for 10 minutes, so an offline machine doesn't wait the full timeout on
+every launch; a later success clears it. The expired version itself is never served. A failed
 cache write still returns the fetched value; malformed or torn cache files read as empty, and the next
-successful write replaces them. A `bypassCache` option skips a fresh entry and always fetches (still
+successful write replaces them. A `bypassCache` option skips a fresh entry or a recent failure and always fetches (still
 writing the result back); `codemie update` uses it, because the user explicitly asked to check now.
 
 The registry is queried directly (one HTTPS GET of `<registry>/<name>/latest`, 3s limit) rather than
@@ -196,8 +198,9 @@ Once the number follows npm rather than a hand-tested pin, every string that say
 - `AGENTS.md` describes Copilot CLI as "Analytics ingestion only — never installed or launched by
   CodeMie," which is stale against the plugin's actual `install()` method. Flagged as documentation
   drift; fixing the guide is out of this ticket's scope.
-- A cache miss (fresh install, past 24h, or offline) pays one registry request of up to 3s per
-  launch; failures are deliberately not cached, so an offline user pays it on every launch.
+- A cache miss (fresh install, past 24h, or offline) pays one registry request of up to 3s at
+  launch; after a failure, lookups are skipped for 10 minutes, so an offline user pays it at most
+  once per 10 minutes per agent.
 - The cache file has no cross-process lock and isn't written atomically: concurrent CLI invocations
   are last-write-wins, and a torn file reads as empty (worst case: one extra lookup).
 - Private npm registries that require authentication aren't supported by the direct lookup; for
