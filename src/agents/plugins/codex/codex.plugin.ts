@@ -62,11 +62,7 @@ import {
 } from './codex.incremental-sync.js';
 import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
 import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation.js';
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import TOML from '@iarna/toml';
-import { isVersionChecksEnabled } from '../../core/version-resolution.js';
+import { mkdir } from 'fs/promises';
 
 /**
  * Marks Codex CLI as version-checked. The tracked version is resolved live from
@@ -82,30 +78,6 @@ const CODEX_SUPPORTED_VERSION = '0.154.0';
  * version stops working with CodeMie.
  */
 const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
-
-/**
- * Turn off Codex's own startup update check (`check_for_update_on_startup = false`),
- * which competes with CodeMie's version tracking. Skipped if the user already set the
- * top-level key to any value. Prepended because a top-level key must precede any
- * `[table]` in TOML. The value stays after checks are turned off: CodeMie can't tell
- * its value from the user's.
- */
-async function ensureUpdateCheckDisabled(codexHome: string): Promise<void> {
-  const configPath = join(codexHome, 'config.toml');
-  try {
-    const existing = existsSync(configPath) ? await readFile(configPath, 'utf-8') : '';
-    // Parse rather than pattern-match: a quoted key, or a key after a multi-line array,
-    // must still count as set, or prepending would create a duplicate (invalid) key.
-    // A file that doesn't parse is the user's to fix; leave it untouched.
-    const parsed = TOML.parse(existing);
-    if (Object.prototype.hasOwnProperty.call(parsed, 'check_for_update_on_startup')) {
-      return;
-    }
-    await writeFile(configPath, `check_for_update_on_startup = false\n${existing}`, 'utf-8');
-  } catch (error) {
-    logger.debug('[codex] Failed to disable check_for_update_on_startup', { error: String(error) });
-  }
-}
 
 /**
  * Build a hook config object from environment variables.
@@ -137,7 +109,7 @@ export const CodexPluginMetadata: AgentMetadata = {
   sessionAnalyticsReport: true,
 
   // Version management configuration
-  supportedVersion: CODEX_SUPPORTED_VERSION,       // Live-tracked from npm; this is only the fallback
+  supportedVersion: CODEX_SUPPORTED_VERSION,       // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   dataPaths: {
@@ -187,14 +159,11 @@ export const CodexPluginMetadata: AgentMetadata = {
      * history, and rollout files do not pollute native Codex state.
      */
     async beforeRun(env: NodeJS.ProcessEnv) {
-      const codemieOwnedHome = !env.CODEX_HOME;
-      const codexHome = env.CODEX_HOME || resolveHomeDir('.codex/codemie/home');
-      env.CODEX_HOME = codexHome;
-
-      await mkdir(codexHome, { recursive: true });
-      if (codemieOwnedHome && (await isVersionChecksEnabled())) {
-        await ensureUpdateCheckDisabled(codexHome);
+      if (!env.CODEX_HOME) {
+        env.CODEX_HOME = resolveHomeDir('.codex/codemie/home');
       }
+
+      await mkdir(env.CODEX_HOME, { recursive: true });
 
       return env;
     },

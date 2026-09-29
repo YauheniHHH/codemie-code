@@ -6,7 +6,6 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { validateGeminiModel } from './gemini.models.js';
-import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
 /**
  * Marks Gemini CLI as version-checked. The tracked version is resolved live
@@ -33,7 +32,7 @@ const metadata = {
   cliCommand: 'gemini',
 
   // Version management configuration
-  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Live-tracked from npm; this is only the fallback
+  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   envMapping: {
@@ -163,14 +162,7 @@ export const GeminiPluginMetadata: AgentMetadata = {
           },
           tools: {
             enableHooks: true
-          },
-          // Gemini's own self-updater can silently rewrite the installed binary
-          // mid-launch (even during a bare `--version` probe), which fights
-          // CodeMie's own version tracking. ensureJsonFile only fills this in
-          // when missing, so an explicit user choice here is left untouched.
-          // This is the user's shared ~/.gemini/settings.json (standalone gemini
-          // reads it too), so it's skipped when version checks are disabled.
-          ...((await isVersionChecksEnabled()) ? { general: { enableAutoUpdate: false } } : {}),
+          }
         }
       );
 

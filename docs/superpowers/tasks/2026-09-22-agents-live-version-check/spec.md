@@ -120,10 +120,6 @@ When disabled there are no network calls from any gated flow:
 - **Minimum-version block:** unchanged. The ticket keeps it "as-is" and scopes this story to the
   recommended/supported advisory only.
 
-Codex's and Gemini's own self-update suppression is also skipped while checks are off. A value
-written earlier is left in place when checks are turned off: CodeMie can't tell its value from one the
-user set. This is documented in `docs/CONFIGURATION.md`.
-
 ### 4. Notice-dedup interaction
 
 `VersionWarningStore` keeps keying its one-time notice on the resolved `supportedVersion` string,

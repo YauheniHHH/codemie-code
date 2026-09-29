@@ -1,7 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
 
 vi.mock('../../../../providers/core/registry.js', () => ({
   ProviderRegistry: {
@@ -18,26 +15,6 @@ vi.mock('../../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
-// Keep ~/.gemini writes inside a temp directory.
-const homeState = vi.hoisted(() => ({ dir: '' }));
-vi.mock('../../../../utils/paths.js', async () => {
-  const actual = await vi.importActual<typeof import('../../../../utils/paths.js')>(
-    '../../../../utils/paths.js'
-  );
-  const { join: joinPath } = await import('path');
-  return { ...actual, resolveHomeDir: (p: string) => joinPath(homeState.dir, p) };
-});
-
-const versionChecks = vi.hoisted(() => ({ enabled: true }));
-vi.mock('../../../core/version-resolution.js', () => ({
-  isVersionChecksEnabled: vi.fn(async () => versionChecks.enabled),
-  resolveSupportedInstallVersion: vi.fn(async () => 'latest'),
-  resolveSupportedVersionDetailed: vi.fn(async ({ fallbackSupportedVersion }) => ({
-    version: fallbackSupportedVersion,
-    isCurrent: true,
-  })),
-}));
-
 const execMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../../utils/processes.js', async () => {
   const actual = await vi.importActual<typeof import('../../../../utils/processes.js')>(
@@ -46,53 +23,17 @@ vi.mock('../../../../utils/processes.js', async () => {
   return { ...actual, exec: execMock };
 });
 
-import { GeminiPlugin, GeminiPluginMetadata } from '../gemini.plugin.js';
-
-const settingsPath = () => join(homeState.dir, '.gemini', 'settings.json');
-
-async function runBeforeRun(): Promise<Record<string, unknown>> {
-  const plugin = new GeminiPlugin();
-  await GeminiPluginMetadata.lifecycle!.beforeRun!.call(plugin, {}, {});
-  return JSON.parse(await readFile(settingsPath(), 'utf-8'));
-}
+import { GeminiPlugin } from '../gemini.plugin.js';
 
 describe('GeminiPlugin', () => {
   const originalPlatform = process.platform;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    versionChecks.enabled = true;
-    homeState.dir = await mkdtemp(join(tmpdir(), 'codemie-gemini-home-'));
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform });
-    await rm(homeState.dir, { recursive: true, force: true });
-  });
-
-  describe('beforeRun self-updater suppression', () => {
-    it('disables Gemini auto-update while version checks are on', async () => {
-      const settings = await runBeforeRun();
-
-      expect(settings.general).toEqual({ enableAutoUpdate: false });
-    });
-
-    it('leaves auto-update alone when version checks are off', async () => {
-      versionChecks.enabled = false;
-
-      const settings = await runBeforeRun();
-
-      expect(settings.general).toBeUndefined();
-    });
-
-    it('never overrides a value the user already set', async () => {
-      await mkdir(join(homeState.dir, '.gemini'), { recursive: true });
-      await writeFile(settingsPath(), JSON.stringify({ general: { enableAutoUpdate: true } }), 'utf-8');
-
-      const settings = await runBeforeRun();
-
-      expect(settings.general).toEqual({ enableAutoUpdate: true });
-    });
   });
 
   describe('getVersion', () => {

@@ -43,9 +43,7 @@ vi.mock('../../../../utils/logger.js', () => ({
 // shipped. The mock echoes back fallbackSupportedVersion (reported as a
 // confirmed live value) to pin the tests to CODEX_SUPPORTED_VERSION again,
 // matching kimi.plugin.test.ts's pattern.
-const versionChecks = vi.hoisted(() => ({ enabled: true }));
 vi.mock('../../../core/version-resolution.js', () => ({
-  isVersionChecksEnabled: vi.fn(async () => versionChecks.enabled),
   resolveSupportedInstallVersion: vi
     .fn()
     .mockImplementation(async ({ fallbackSupportedVersion }) => fallbackSupportedVersion),
@@ -70,7 +68,6 @@ vi.mock('../../../../utils/paths.js', async () => {
 describe('CodexPlugin version support', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    versionChecks.enabled = true;
     const { mkdtemp } = await import('fs/promises');
     const { tmpdir } = await import('os');
     const { join } = await import('path');
@@ -242,62 +239,6 @@ describe('CodexPlugin version support', () => {
     expect(env.CODEX_HOME).toMatch(/[/\\]\.codex[/\\]codemie[/\\]home$/);
   });
 
-  it('disables Codex self-update checks in the CodeMie-owned CODEX_HOME', async () => {
-    const { readFile } = await import('fs/promises');
-    const { join } = await import('path');
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    const env = await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
-
-    const toml = await readFile(join(env.CODEX_HOME!, 'config.toml'), 'utf-8');
-    expect(toml).toContain('check_for_update_on_startup = false');
-  });
-
-  it.each([
-    ['a quoted top-level key', '"check_for_update_on_startup" = true\n'],
-    ['a key after a multi-line array', 'trusted = [\n  "a",\n  ["b"],\n]\ncheck_for_update_on_startup = true\n'],
-  ])('does not add a duplicate key when the user already set it as %s', async (_label, existing) => {
-    const { mkdir, readFile, writeFile } = await import('fs/promises');
-    const { join } = await import('path');
-    const home = join(homeState.dir, '.codex/codemie/home');
-    await mkdir(home, { recursive: true });
-    await writeFile(join(home, 'config.toml'), existing, 'utf-8');
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
-
-    expect(await readFile(join(home, 'config.toml'), 'utf-8')).toBe(existing);
-  });
-
-  it('adds the top-level key when the same name only exists inside another table', async () => {
-    const { mkdir, readFile, writeFile } = await import('fs/promises');
-    const { join } = await import('path');
-    const TOML = (await import('@iarna/toml')).default;
-    const home = join(homeState.dir, '.codex/codemie/home');
-    await mkdir(home, { recursive: true });
-    await writeFile(join(home, 'config.toml'), '[profiles.work]\ncheck_for_update_on_startup = true\n', 'utf-8');
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
-
-    const parsed = TOML.parse(await readFile(join(home, 'config.toml'), 'utf-8')) as Record<string, unknown>;
-    expect(parsed.check_for_update_on_startup).toBe(false);
-    expect(parsed.profiles).toEqual({ work: { check_for_update_on_startup: true } });
-  });
-
-  it('leaves a config.toml that does not parse untouched', async () => {
-    const { mkdir, readFile, writeFile } = await import('fs/promises');
-    const { join } = await import('path');
-    const home = join(homeState.dir, '.codex/codemie/home');
-    await mkdir(home, { recursive: true });
-    await writeFile(join(home, 'config.toml'), 'this is = = not toml\n', 'utf-8');
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
-
-    expect(await readFile(join(home, 'config.toml'), 'utf-8')).toBe('this is = = not toml\n');
-  });
-
   it('runs getVersion through a shell only on Windows, where codex is an npm .cmd shim', async () => {
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({ code: 0, stdout: 'codex-cli 0.155.1', stderr: '' });
@@ -317,19 +258,7 @@ describe('CodexPlugin version support', () => {
     }
   });
 
-  it('leaves Codex self-update checks alone when version checks are disabled', async () => {
-    const { existsSync } = await import('fs');
-    const { join } = await import('path');
-    versionChecks.enabled = false;
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    const env = await CodexPluginMetadata.lifecycle!.beforeRun!({}, { provider: 'ai-run-sso' });
-
-    expect(existsSync(join(env.CODEX_HOME!, 'config.toml'))).toBe(false);
-  });
-
-  it('preserves an explicit CODEX_HOME override and never writes into it', async () => {
-    const { existsSync } = await import('fs');
+  it('preserves an explicit CODEX_HOME override', async () => {
     const { join } = await import('path');
     const { CodexPluginMetadata } = await import('../codex.plugin.js');
     const customHome = join(homeState.dir, 'custom-codex-home');
@@ -343,6 +272,5 @@ describe('CodexPlugin version support', () => {
     );
 
     expect(env.CODEX_HOME).toBe(customHome);
-    expect(existsSync(join(customHome, 'config.toml'))).toBe(false);
   });
 });

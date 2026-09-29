@@ -21,10 +21,9 @@ export {
   COPILOT_CLI_DISPLAY_NAME,
 } from './copilot-cli.constants.js';
 
-// Tracked version (maintainer-pinned — Copilot is not live-tracked; one
-// non-blocking notice on mismatch) and the hard gate below which the agent
-// refuses to launch. Rule: the minimum is the previously tracked version —
-// when bumping the former, move its old value to the latter.
+// Recommended version (one non-blocking notice on mismatch) and the hard gate
+// below which the agent refuses to launch. Rule: the minimum is the previously
+// recommended version — when bumping the former, move its old value to the latter.
 const COPILOT_SUPPORTED_VERSION = '1.0.83';
 const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.79';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;

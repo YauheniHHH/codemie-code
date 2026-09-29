@@ -124,7 +124,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   sessionAnalyticsReport: true,
 
   // Version management configuration
-  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Live-tracked from npm; this is only the fallback
+  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Marks as version-checked; tracked version is live from npm
   minimumSupportedVersion: CLAUDE_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   // Native installer URLs (used by installNativeAgent utility)
