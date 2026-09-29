@@ -33,23 +33,17 @@ import {
 let statuslineManagedThisSession = false;
 
 /**
- * Fallback tracked Claude Code version, used only if the live npm lookup
- * fails (Claude is live-tracked — see `LIVE_TRACKED_AGENT_NAMES`).
- * A different installed version produces one non-blocking notice, never a block.
- *
- * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ * Marks Claude Code as version-checked. The tracked version is resolved live
+ * from npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 export const CLAUDE_SUPPORTED_VERSION = '2.1.281';
 
 /**
  * Minimum supported Claude Code version — the only hard gate; below it the
- * agent refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * CLAUDE_SUPPORTED_VERSION, move its old value down to here — users stay
- * supported for one full recommendation cycle before they are cut off.
- *
- * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ * agent refuses to launch. Maintained by hand: raise it when an older Claude
+ * Code version stops working with CodeMie.
  */
 const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.269';
 
