@@ -62,29 +62,24 @@ import {
 } from './codex.incremental-sync.js';
 import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
 import { findRolloutForRun, recordRolloutCorrelation } from './codex.correlation.js';
-import { mkdir, readFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import TOML from '@iarna/toml';
-import { writeAtomically } from '../../../cli/commands/proxy/connectors/vscode.js';
 import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
 /**
- * Fallback tracked Codex CLI version, used only if the live npm lookup fails
- * (Codex is live-tracked — see `LIVE_TRACKED_AGENT_NAMES`).
- *
- * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ * Marks Codex CLI as version-checked. The tracked version is resolved live from
+ * npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 const CODEX_SUPPORTED_VERSION = '0.154.0';
 
 /**
  * Minimum supported Codex CLI version — the only hard gate; below it the agent
- * refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * CODEX_SUPPORTED_VERSION, move its old value down to here.
- *
- * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ * refuses to launch. Maintained by hand: raise it when an older Codex CLI
+ * version stops working with CodeMie.
  */
 const CODEX_MINIMUM_SUPPORTED_VERSION = '0.143.0';
 
@@ -106,7 +101,7 @@ async function ensureUpdateCheckDisabled(codexHome: string): Promise<void> {
     if (Object.prototype.hasOwnProperty.call(parsed, 'check_for_update_on_startup')) {
       return;
     }
-    await writeAtomically(configPath, `check_for_update_on_startup = false\n${existing}`);
+    await writeFile(configPath, `check_for_update_on_startup = false\n${existing}`, 'utf-8');
   } catch (error) {
     logger.debug('[codex] Failed to disable check_for_update_on_startup', { error: String(error) });
   }

@@ -9,21 +9,17 @@ import { validateGeminiModel } from './gemini.models.js';
 import { isVersionChecksEnabled } from '../../core/version-resolution.js';
 
 /**
- * Fallback tracked Gemini CLI version, used only if the live npm lookup fails
- * (Gemini is live-tracked — see `LIVE_TRACKED_AGENT_NAMES`).
- *
- * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ * Marks Gemini CLI as version-checked. The tracked version is resolved live
+ * from npm (see `LIVE_TRACKED_AGENT_NAMES`); this value is never presented as
+ * current — when the lookup fails or checks are off, the tracked version is
+ * reported as unknown. No need to bump it on new releases.
  */
 const GEMINI_SUPPORTED_VERSION = '0.59.0';
 
 /**
  * Minimum supported Gemini CLI version — the only hard gate; below it the agent
- * refuses to launch.
- *
- * Rule: the previously recommended version. When bumping
- * GEMINI_SUPPORTED_VERSION, move its old value down to here.
- *
- * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ * refuses to launch. Maintained by hand: raise it when an older Gemini CLI
+ * version stops working with CodeMie.
  */
 const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.5';
 
