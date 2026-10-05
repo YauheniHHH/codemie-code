@@ -60,44 +60,58 @@ export async function setup(): Promise<void> {
     process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
   }
 
-  // Import supported version and plugin class from the just-built dist.
-  // CLAUDE_SUPPORTED_VERSION is the single source of truth; when a developer
-  // bumps it locally and runs tests, this block installs the correct version.
-  const { CLAUDE_SUPPORTED_VERSION, ClaudePlugin } = await import(
+  // Import the plugin and the version resolver from the just-built dist. The target is the
+  // version installVersion('supported') itself installs — the live tracked release, or
+  // 'latest' when that is unknown — so this check and the install can never disagree.
+  const { ClaudePlugin, ClaudePluginMetadata } = await import(
     resolve(root, 'dist/agents/plugins/claude/claude.plugin.js')
   ) as {
-    CLAUDE_SUPPORTED_VERSION: string;
     ClaudePlugin: new () => { installVersion(v: string): Promise<void> };
+    ClaudePluginMetadata: { name: string; npmPackage?: string | null; supportedVersion?: string };
+  };
+  const { resolveSupportedInstallVersion } = await import(
+    resolve(root, 'dist/agents/core/version-resolution.js')
+  ) as {
+    resolveSupportedInstallVersion(input: {
+      agentName: string;
+      npmPackage?: string | null;
+      fallbackSupportedVersion?: string;
+    }): Promise<string>;
   };
 
-  let installedVersion: string | null = null;
-  try {
-    const versionOutput = execSync('claude --version', { stdio: 'pipe' }).toString().trim();
-    const match = versionOutput.match(/^(\d+\.\d+\.\d+)/);
-    installedVersion = match ? match[1] : null;
-  } catch {
-    // Binary not found — installedVersion stays null.
-  }
-
-  if (installedVersion === CLAUDE_SUPPORTED_VERSION) {
-    console.log(`[agent-integration] claude CLI ${CLAUDE_SUPPORTED_VERSION} already installed — skipping.\n`);
-  } else {
-    if (installedVersion) {
-      console.log(
-        `[agent-integration] claude CLI version mismatch (installed: ${installedVersion}, required: ${CLAUDE_SUPPORTED_VERSION}) — installing supported version...`,
-      );
-    } else {
-      console.log(
-        `[agent-integration] claude CLI not found — installing supported version ${CLAUDE_SUPPORTED_VERSION}...`,
-      );
+  const readInstalledClaudeVersion = (): string | null => {
+    try {
+      const versionOutput = execSync('claude --version', { stdio: 'pipe' }).toString().trim();
+      return versionOutput.match(/^(\d+\.\d+\.\d+)/)?.[1] ?? null;
+    } catch {
+      return null; // binary not found
     }
+  };
+
+  const targetVersion = await resolveSupportedInstallVersion({
+    agentName: ClaudePluginMetadata.name,
+    npmPackage: ClaudePluginMetadata.npmPackage,
+    fallbackSupportedVersion: ClaudePluginMetadata.supportedVersion,
+  });
+  const installedVersion = readInstalledClaudeVersion();
+
+  // With the tracked version unknown ('latest'), any installed Claude is kept: there is
+  // nothing concrete to compare against, and reinstalling would gain nothing.
+  if (installedVersion && (installedVersion === targetVersion || targetVersion === 'latest')) {
+    console.log(`[agent-integration] claude CLI ${installedVersion} already installed — skipping.\n`);
+  } else {
+    console.log(
+      installedVersion
+        ? `[agent-integration] claude CLI version mismatch (installed: ${installedVersion}, tracked: ${targetVersion}) — installing...`
+        : `[agent-integration] claude CLI not found — installing ${targetVersion}...`,
+    );
     await new ClaudePlugin().installVersion('supported');
     // Re-add localBin in case the installer modified PATH during its run.
     if (!(process.env.PATH ?? '').includes(localBin)) {
       process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
     }
     execSync('claude --version', { stdio: 'pipe' }); // throws if install genuinely failed
-    console.log(`[agent-integration] claude CLI ${CLAUDE_SUPPORTED_VERSION} installed.\n`);
+    console.log(`[agent-integration] claude CLI ${readInstalledClaudeVersion() ?? 'unknown version'} installed.\n`);
   }
 
   // Link the local build to global PATH so `codemie hook` resolves when
