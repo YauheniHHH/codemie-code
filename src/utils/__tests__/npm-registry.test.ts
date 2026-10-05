@@ -25,6 +25,7 @@ const ENV_KEYS = [
   'https_proxy',
   'NO_PROXY',
   'no_proxy',
+  'CODEMIE_NO_SYSTEM_PROXY',
 ];
 const savedEnv: Record<string, string | undefined> = {};
 let workDir: string;
@@ -51,6 +52,9 @@ beforeEach(async () => {
   workDir = await mkdtemp(join(tmpdir(), 'codemie-npm-registry-'));
   // No user .npmrc, so the developer's own npm settings can't leak into the tests.
   process.env.npm_config_userconfig = join(workDir, 'no-user-npmrc');
+  // Nor the machine's Windows proxy/PAC settings, whose registry read can also outlast the
+  // short timeouts below when the suite runs under full parallel load.
+  process.env.CODEMIE_NO_SYSTEM_PROXY = '1';
   seenPaths.length = 0;
   handler = (_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
