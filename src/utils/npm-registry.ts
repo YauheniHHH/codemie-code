@@ -5,6 +5,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
+import {
+  IMPLICIT_NO_PROXY,
+  getEnvNoProxyEntries,
+  getProxyAgentForUrl,
+  parseNoProxyRules,
+  shouldBypassProxy,
+  splitRules,
+} from './system-proxy.js';
 
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org/';
 const MAX_RESPONSE_BYTES = 1024 * 1024;
@@ -61,63 +69,91 @@ export function resolveRegistry(packageName: string, cwd: string = process.cwd()
   return registry.endsWith('/') ? registry : `${registry}/`;
 }
 
-function isNoProxyHost(hostname: string): boolean {
-  const rules = (process.env.NO_PROXY || process.env.no_proxy || '')
-    .split(',')
-    .map((rule) => rule.trim().toLowerCase())
-    .filter(Boolean);
-  const host = hostname.toLowerCase();
-  return rules.some(
-    (rule) => rule === '*' || host === rule.replace(/^\./, '') || host.endsWith(rule.startsWith('.') ? rule : `.${rule}`)
-  );
+// npm's own `https-proxy`/`proxy` settings win over HTTPS_PROXY/HTTP_PROXY, as they do for npm
+// itself. Without them, the shared resolver applies the env vars and then the Windows system
+// proxy / PAC, so a registry behind a PAC-only corporate proxy is reachable too.
+async function proxyAgentFor(url: URL, config: NpmConfig): Promise<HttpAgent | undefined> {
+  const isHttps = url.protocol === 'https:';
+  const npmProxy = isHttps
+    ? npmSetting(config, 'https-proxy') || npmSetting(config, 'proxy')
+    : npmSetting(config, 'proxy');
+  if (!npmProxy) return getProxyAgentForUrl(url, { keepAlive: false });
+
+  const port = Number.parseInt(url.port, 10) || (isHttps ? 443 : 80);
+  const noProxyRules = parseNoProxyRules([
+    ...IMPLICIT_NO_PROXY,
+    ...getEnvNoProxyEntries(),
+    ...splitRules(npmSetting(config, 'noproxy')),
+  ]);
+  if (shouldBypassProxy(url.hostname, port, noProxyRules)) return undefined;
+  return isHttps ? new HttpsProxyAgent(npmProxy) : new HttpProxyAgent(npmProxy);
 }
 
-function proxyAgentFor(url: URL, config: NpmConfig): HttpAgent | undefined {
-  if (isNoProxyHost(url.hostname)) return undefined;
-  if (url.protocol === 'https:') {
-    const proxy =
-      process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy ||
-      npmSetting(config, 'https-proxy') || npmSetting(config, 'proxy');
-    return proxy ? new HttpsProxyAgent(proxy) : undefined;
+// Bounds proxy discovery (a registry read and a PAC fetch on Windows) by the caller's deadline;
+// a discovery failure goes direct, as getProxyAgentForUrl itself does.
+async function proxyAgentWithin(
+  url: URL,
+  config: NpmConfig,
+  timeoutMs: number
+): Promise<{ agent: HttpAgent | undefined } | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  const discovered = proxyAgentFor(url, config).then(
+    (agent) => ({ agent }),
+    () => ({ agent: undefined })
+  );
+  try {
+    return await Promise.race([discovered, timedOut]);
+  } finally {
+    clearTimeout(timer);
   }
-  const proxy = process.env.HTTP_PROXY || process.env.http_proxy || npmSetting(config, 'proxy');
-  return proxy ? new HttpProxyAgent(proxy) : undefined;
 }
 
 /**
  * The `latest` dist-tag version of a package, read straight from the npm registry (one small
  * HTTP request instead of spawning `npm view`, which takes 3s+ on Windows). Uses npm's configured
- * registry and proxy. Returns `null` on any failure — timeout, network error, non-200, or a
- * response without a version; registries that require authentication are not supported.
+ * registry and proxy, else the system proxy. Returns `null` on any failure — timeout, network
+ * error, non-200, or a response without a version; registries that require authentication are
+ * not supported.
  *
  * @param packageName - npm package name, e.g. `@openai/codex`
- * @param options.timeoutMs - abort the request after this long
+ * @param options.timeoutMs - give up after this long, proxy discovery included
  */
-export function fetchLatestVersionFromRegistry(
+export async function fetchLatestVersionFromRegistry(
   packageName: string,
   options: { timeoutMs: number; cwd?: string }
 ): Promise<string | null> {
-  return new Promise((resolve) => {
-    let url: URL;
-    let config: NpmConfig;
-    try {
-      const cwd = options.cwd ?? process.cwd();
-      config = loadNpmConfig(cwd);
-      // `@scope/name` must be encoded as `@scope%2fname` for registries other than npmjs.
-      url = new URL(`${packageName.replace('/', '%2f')}/latest`, resolveRegistry(packageName, cwd));
-    } catch {
-      resolve(null);
-      return;
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-      resolve(null);
-      return;
-    }
+  const startedAt = Date.now();
+  let url: URL;
+  let config: NpmConfig;
+  try {
+    const cwd = options.cwd ?? process.cwd();
+    config = loadNpmConfig(cwd);
+    // `@scope/name` must be encoded as `@scope%2fname` for registries other than npmjs.
+    url = new URL(`${packageName.replace('/', '%2f')}/latest`, resolveRegistry(packageName, cwd));
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return null;
+  }
 
+  const proxy = await proxyAgentWithin(url, config, options.timeoutMs);
+  const remainingMs = options.timeoutMs - (Date.now() - startedAt);
+  if (!proxy || remainingMs <= 0) {
+    return null;
+  }
+  return requestLatestVersion(url, proxy.agent, remainingMs);
+}
+
+function requestLatestVersion(url: URL, agent: HttpAgent | undefined, timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve) => {
     const get = url.protocol === 'https:' ? httpsGet : httpGet;
     const request = get(
       url,
-      { agent: proxyAgentFor(url, config), headers: { accept: 'application/json' }, timeout: options.timeoutMs },
+      { agent, headers: { accept: 'application/json' }, timeout: timeoutMs },
       (response) => {
         if (response.statusCode !== 200) {
           response.resume();
@@ -142,7 +178,7 @@ export function fetchLatestVersionFromRegistry(
       }
     );
     // `timeout` above only covers an idle socket; this bounds the whole request.
-    const deadline = setTimeout(() => request.destroy(), options.timeoutMs);
+    const deadline = setTimeout(() => request.destroy(), timeoutMs);
     request.on('close', () => {
       clearTimeout(deadline);
       resolve(null); // no-op if the response already resolved
