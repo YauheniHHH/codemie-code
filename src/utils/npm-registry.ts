@@ -20,10 +20,8 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 type NpmConfig = Record<string, string>;
 
 // Minimal .npmrc reader: `key=value` lines, `#`/`;` comments, optional surrounding quotes, and
-// `${VAR}` expansion when `expandEnv` is set. Expansion is off for a project .npmrc (a value that
-// needs it is skipped): the lookup runs on every agent launch, so a checked-out repo must not be
-// able to route env secrets (e.g. `registry=https://host/${TOKEN}/`) to a host of its choosing.
-function readNpmrc(file: string, expandEnv: boolean): NpmConfig {
+// `${VAR}` expansion.
+function readNpmrc(file: string): NpmConfig {
   if (!existsSync(file)) return {};
   const config: NpmConfig = {};
   try {
@@ -37,12 +35,7 @@ function readNpmrc(file: string, expandEnv: boolean): NpmConfig {
       if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.endsWith(value[0])) {
         value = value.slice(1, -1);
       }
-      if (expandEnv) {
-        value = value.replace(/\$\{([^}]+)\}/g, (_, name: string) => process.env[name] ?? '');
-      } else if (/\$\{[^}]+\}/.test(value)) {
-        continue;
-      }
-      config[key] = value;
+      config[key] = value.replace(/\$\{([^}]+)\}/g, (_, name: string) => process.env[name] ?? '');
     }
   } catch {
     return {};
@@ -50,35 +43,37 @@ function readNpmrc(file: string, expandEnv: boolean): NpmConfig {
   return config;
 }
 
-// npm's own precedence for the settings used here: env var > project .npmrc > user .npmrc.
+// npm's own precedence for the settings used here: env var > user .npmrc.
 function npmSetting(config: NpmConfig, key: string): string | undefined {
   const envKey = `npm_config_${key.replace(/-/g, '_')}`;
   return process.env[envKey] || process.env[envKey.toUpperCase()] || config[key] || undefined;
 }
 
-function loadNpmConfig(cwd: string): NpmConfig {
-  const userConfig = process.env.npm_config_userconfig || process.env.NPM_CONFIG_USERCONFIG || join(homedir(), '.npmrc');
-  return { ...readNpmrc(userConfig, true), ...readNpmrc(join(cwd, '.npmrc'), false) };
+// User-level config only — never the current project's .npmrc. The lookup runs on every agent
+// launch and its result is cached globally, so a checked-out repo must not be able to pick the
+// registry or proxy it comes from: it could plant an old release as the tracked version for every
+// project, or route env secrets (`registry=https://host/${TOKEN}/`) to a host of its choosing.
+function loadNpmConfig(): NpmConfig {
+  return readNpmrc(process.env.npm_config_userconfig || process.env.NPM_CONFIG_USERCONFIG || join(homedir(), '.npmrc'));
 }
 
-/** The registry npm would use for this package, honoring `@scope:registry` and `registry`. */
-export function resolveRegistry(packageName: string, cwd: string = process.cwd()): string {
-  const config = loadNpmConfig(cwd);
+/**
+ * The registry npm would use for this package per the user's npm config (`@scope:registry`, then
+ * `registry`); a project's .npmrc is deliberately ignored.
+ */
+export function resolveRegistry(packageName: string): string {
+  const config = loadNpmConfig();
   const scope = packageName.startsWith('@') ? packageName.split('/')[0] : undefined;
   const registry = (scope && config[`${scope}:registry`]) || npmSetting(config, 'registry') || DEFAULT_REGISTRY;
   return registry.endsWith('/') ? registry : `${registry}/`;
 }
 
-// npm's own `https-proxy`/`proxy` settings win over HTTPS_PROXY/HTTP_PROXY, as they do for npm
-// itself. Without them, the shared resolver applies the env vars and then the Windows system
-// proxy / PAC, so a registry behind a PAC-only corporate proxy is reachable too.
+// NO_PROXY/no_proxy and npm's `noproxy` decide first, whichever proxy would apply. Then npm's own
+// `https-proxy`/`proxy` settings win over HTTPS_PROXY/HTTP_PROXY, as they do for npm itself.
+// Without them, the shared resolver applies the env vars and then the Windows system proxy / PAC,
+// so a registry behind a PAC-only corporate proxy is reachable too.
 async function proxyAgentFor(url: URL, config: NpmConfig): Promise<HttpAgent | undefined> {
   const isHttps = url.protocol === 'https:';
-  const npmProxy = isHttps
-    ? npmSetting(config, 'https-proxy') || npmSetting(config, 'proxy')
-    : npmSetting(config, 'proxy');
-  if (!npmProxy) return getProxyAgentForUrl(url, { keepAlive: false });
-
   const port = Number.parseInt(url.port, 10) || (isHttps ? 443 : 80);
   const noProxyRules = parseNoProxyRules([
     ...IMPLICIT_NO_PROXY,
@@ -86,6 +81,11 @@ async function proxyAgentFor(url: URL, config: NpmConfig): Promise<HttpAgent | u
     ...splitRules(npmSetting(config, 'noproxy')),
   ]);
   if (shouldBypassProxy(url.hostname, port, noProxyRules)) return undefined;
+
+  const npmProxy = isHttps
+    ? npmSetting(config, 'https-proxy') || npmSetting(config, 'proxy')
+    : npmSetting(config, 'proxy');
+  if (!npmProxy) return getProxyAgentForUrl(url, { keepAlive: false });
   return isHttps ? new HttpsProxyAgent(npmProxy) : new HttpProxyAgent(npmProxy);
 }
 
@@ -113,26 +113,25 @@ async function proxyAgentWithin(
 
 /**
  * The `latest` dist-tag version of a package, read straight from the npm registry (one small
- * HTTP request instead of spawning `npm view`, which takes 3s+ on Windows). Uses npm's configured
- * registry and proxy, else the system proxy. Returns `null` on any failure — timeout, network
- * error, non-200, or a response without a version; registries that require authentication are
- * not supported.
+ * HTTP request instead of spawning `npm view`, which takes 3s+ on Windows). Uses the registry and
+ * proxy from the user's npm config, else the system proxy. Returns `null` on any failure —
+ * timeout, network error, non-200, or a response without a version; registries that require
+ * authentication are not supported.
  *
  * @param packageName - npm package name, e.g. `@openai/codex`
  * @param options.timeoutMs - give up after this long, proxy discovery included
  */
 export async function fetchLatestVersionFromRegistry(
   packageName: string,
-  options: { timeoutMs: number; cwd?: string }
+  options: { timeoutMs: number }
 ): Promise<string | null> {
   const startedAt = Date.now();
   let url: URL;
   let config: NpmConfig;
   try {
-    const cwd = options.cwd ?? process.cwd();
-    config = loadNpmConfig(cwd);
+    config = loadNpmConfig();
     // `@scope/name` must be encoded as `@scope%2fname` for registries other than npmjs.
-    url = new URL(`${packageName.replace('/', '%2f')}/latest`, resolveRegistry(packageName, cwd));
+    url = new URL(`${packageName.replace('/', '%2f')}/latest`, resolveRegistry(packageName));
   } catch {
     return null;
   }

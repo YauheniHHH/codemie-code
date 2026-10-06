@@ -61,12 +61,13 @@ writing the result back); `codemie update` uses it, because the user explicitly 
 The registry is queried directly (one HTTPS GET of `<registry>/<name>/latest`, 3s limit) rather than
 by spawning `npm view`: measured on a Windows laptop, `npm view` took 2.5–3.8s per package and ~4s
 each when run in parallel, so the original 3s limit was routinely exceeded and the feature silently did
-nothing. The direct request takes well under a second. It honors npm's `registry` and `@scope:registry`
-settings (env var, project `.npmrc`, user `.npmrc`) and `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`, plus
-npm's `https-proxy`/`proxy`. Registries that require authentication aren't supported; those lookups
-fail safely. `${VAR}` references are expanded only in the user `.npmrc`; a project `.npmrc` value that
-contains one is ignored, so a checked-out repo can't route env secrets to a host of its choosing on
-agent launch.
+nothing. The direct request takes well under a second. It honors npm's `registry`, `@scope:registry`,
+`https-proxy`/`proxy` and `noproxy` settings from the user `.npmrc` and `npm_config_*` env vars;
+without an npm proxy it uses `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` and then the Windows system proxy /
+PAC. A project `.npmrc` is deliberately **not** read: the result is cached globally for 24h, so a
+checked-out repo that could pick the registry or proxy could plant an old release as the tracked
+version for every project (or route env secrets via `${VAR}` to a host of its choosing). Registries
+that require authentication aren't supported; those lookups fail safely.
 
 ### 2. `supportedVersion` becomes live-tracked, uniformly, for an explicit allowlist
 
@@ -142,8 +143,10 @@ Once the number follows npm rather than a hand-tested pin, every string that say
 "verified" or "recommends" a version is inaccurate. All of them use "tracking" framing instead
 (decided during implementation, answering the ticket's open question on terminology):
 
-- `update.ts` — up-to-date message: "no newer version available".
-- `setup.ts` — "ahead of the tracked v...", and a neutral "Installing Claude Code..." spinner.
+- `update.ts` — up-to-date message: "no newer version available"; an agent whose lookup failed is
+  reported as "Could not check <agent> for updates" instead of being silently dropped.
+- `setup.ts` — a neutral "Installing Claude Code..." spinner. No "ahead of the tracked v..." line:
+  being ahead of a live-tracked version gets no advice (§4), so setup shows the plain "installed" line.
 - `AgentsCheck.ts` — "CodeMie is tracking v...".
 - `install.ts` — "(tracked version)" instead of "(supported version)".
 - The launch notice ("CodeMie is tracking X vN; you are running vM"), the `install --supported`

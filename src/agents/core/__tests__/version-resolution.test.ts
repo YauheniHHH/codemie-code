@@ -13,6 +13,7 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 import {
+  isAheadOfLiveTracking,
   isLiveTrackedAgent,
   isVersionChecksEnabled,
   resolveSupportedInstallVersion,
@@ -98,6 +99,18 @@ describe('isLiveTrackedAgent', () => {
   it('tracks the ticket agents and kimi-acp, but not copilot-cli', () => {
     expect(['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'].every(isLiveTrackedAgent)).toBe(true);
     expect(isLiveTrackedAgent('copilot-cli')).toBe(false);
+  });
+});
+
+describe('isAheadOfLiveTracking', () => {
+  it('is true only for a live-tracked agent installed ahead of the tracked version', () => {
+    expect(isAheadOfLiveTracking('claude', { isNewer: true })).toBe(true);
+    expect(isAheadOfLiveTracking('claude', { isNewer: false })).toBe(false);
+    expect(isAheadOfLiveTracking('claude', {})).toBe(false);
+  });
+
+  it('is false for an agent with a maintainer-pinned version, which keeps its notice', () => {
+    expect(isAheadOfLiveTracking('copilot-cli', { isNewer: true })).toBe(false);
   });
 });
 

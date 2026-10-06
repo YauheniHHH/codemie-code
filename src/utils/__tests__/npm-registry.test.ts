@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -70,52 +70,61 @@ afterEach(async () => {
   await rm(workDir, { recursive: true, force: true });
 });
 
-const fetchFrom = (pkg: string, timeoutMs = 2000) => fetchLatestVersionFromRegistry(pkg, { timeoutMs, cwd: workDir });
+const fetchFrom = (pkg: string, timeoutMs = 2000) => fetchLatestVersionFromRegistry(pkg, { timeoutMs });
+
+// Writes the user-level .npmrc (the only npm config file the lookup reads).
+const writeUserNpmrc = async (content: string): Promise<void> => {
+  const userNpmrc = join(workDir, 'user-npmrc');
+  await writeFile(userNpmrc, content, 'utf-8');
+  process.env.npm_config_userconfig = userNpmrc;
+};
 
 describe('resolveRegistry', () => {
   it('defaults to the public npm registry', () => {
-    expect(resolveRegistry('@openai/codex', workDir)).toBe('https://registry.npmjs.org/');
+    expect(resolveRegistry('@openai/codex')).toBe('https://registry.npmjs.org/');
   });
 
-  it('prefers a scoped registry from the project .npmrc over the default registry', async () => {
-    await writeFile(join(workDir, '.npmrc'), `registry=${baseUrl}\n@openai:registry=${baseUrl}scoped\n`, 'utf-8');
+  it('prefers a scoped registry from the user .npmrc over the default registry', async () => {
+    await writeUserNpmrc(`registry=${baseUrl}\n@openai:registry=${baseUrl}scoped\n`);
 
-    expect(resolveRegistry('@openai/codex', workDir)).toBe(`${baseUrl}scoped/`);
-    expect(resolveRegistry('opencode-ai', workDir)).toBe(baseUrl);
+    expect(resolveRegistry('@openai/codex')).toBe(`${baseUrl}scoped/`);
+    expect(resolveRegistry('opencode-ai')).toBe(baseUrl);
   });
 
   it('lets the npm_config_registry env var override .npmrc', async () => {
-    await writeFile(join(workDir, '.npmrc'), 'registry=https://example.invalid/\n', 'utf-8');
+    await writeUserNpmrc('registry=https://example.invalid/\n');
     process.env.npm_config_registry = baseUrl;
 
-    expect(resolveRegistry('opencode-ai', workDir)).toBe(baseUrl);
+    expect(resolveRegistry('opencode-ai')).toBe(baseUrl);
   });
 
   it('strips quotes around .npmrc values', async () => {
-    await writeFile(join(workDir, '.npmrc'), `registry="${baseUrl}quoted"\n`, 'utf-8');
+    await writeUserNpmrc(`registry="${baseUrl}quoted"\n`);
 
-    expect(resolveRegistry('opencode-ai', workDir)).toBe(`${baseUrl}quoted/`);
+    expect(resolveRegistry('opencode-ai')).toBe(`${baseUrl}quoted/`);
   });
 
-  it('never expands env vars from a project .npmrc, so a repo cannot route secrets to its host', async () => {
-    process.env.CODEMIE_TEST_SECRET = 'secret-token';
+  it('ignores the current project .npmrc, so a repo cannot pick the registry or proxy', async () => {
+    await writeFile(
+      join(workDir, '.npmrc'),
+      'registry=https://attacker.invalid/\n@openai:registry=https://attacker.invalid/\nhttps-proxy=http://attacker.invalid:8080\n',
+      'utf-8'
+    );
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(workDir);
     try {
-      await writeFile(join(workDir, '.npmrc'), 'registry=https://attacker.invalid/${CODEMIE_TEST_SECRET}/\n', 'utf-8');
-
-      expect(resolveRegistry('opencode-ai', workDir)).toBe('https://registry.npmjs.org/');
+      expect(resolveRegistry('@openai/codex')).toBe('https://registry.npmjs.org/');
+      expect(resolveRegistry('opencode-ai')).toBe('https://registry.npmjs.org/');
     } finally {
-      delete process.env.CODEMIE_TEST_SECRET;
+      cwd.mockRestore();
     }
   });
 
   it('expands env vars from the user .npmrc', async () => {
     process.env.CODEMIE_TEST_HOST = '127.0.0.1';
     try {
-      const userNpmrc = join(workDir, 'user-npmrc');
-      await writeFile(userNpmrc, 'registry=https://${CODEMIE_TEST_HOST}/npm/\n', 'utf-8');
-      process.env.npm_config_userconfig = userNpmrc;
+      await writeUserNpmrc('registry=https://${CODEMIE_TEST_HOST}/npm/\n');
 
-      expect(resolveRegistry('opencode-ai', workDir)).toBe('https://127.0.0.1/npm/');
+      expect(resolveRegistry('opencode-ai')).toBe('https://127.0.0.1/npm/');
     } finally {
       delete process.env.CODEMIE_TEST_HOST;
     }
@@ -190,5 +199,24 @@ describe('fetchLatestVersionFromRegistry', () => {
     process.env.NO_PROXY = 'localhost,127.0.0.1';
 
     await expect(fetchFrom('@openai/codex')).resolves.toBe('0.160.0');
+  });
+
+  it("prefers npm's own proxy setting over HTTP_PROXY, as npm does", async () => {
+    process.env.npm_config_registry = 'http://registry.example.invalid/';
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1'; // would fail if used
+    await writeUserNpmrc(`proxy=${baseUrl}\n`);
+
+    await expect(fetchFrom('@openai/codex')).resolves.toBe('0.160.0');
+    expect(seenPaths).toEqual(['http://registry.example.invalid/@openai%2fcodex/latest']);
+  });
+
+  it("applies npm's noproxy even when the proxy comes from HTTP_PROXY", async () => {
+    process.env.npm_config_registry = 'http://registry.example.invalid/';
+    process.env.HTTP_PROXY = baseUrl.replace(/\/$/, '');
+    await writeUserNpmrc('noproxy=registry.example.invalid\n');
+
+    // Goes direct to the (unresolvable) registry, so the proxy never sees the request.
+    await expect(fetchFrom('@openai/codex')).resolves.toBeNull();
+    expect(seenPaths).toEqual([]);
   });
 });
