@@ -353,6 +353,30 @@ describe('createUpdateCommand', () => {
     expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
   });
 
+  it('lists the agents it could check and reports the one whose lookup failed', async () => {
+    const opencode = {
+      name: 'opencode',
+      displayName: 'OpenCode',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: 'opencode-ai' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.0.0'),
+    };
+    registryMock.getManageableAgents.mockReturnValue([
+      opencode,
+      liveTrackedAgent('@codemie-test/mixed-offline'),
+    ] as never);
+    npmMock.getLatestVersion.mockImplementation(async (pkg: string) => (pkg === 'opencode-ai' ? '2.0.0' : null));
+
+    await createUpdateCommand().parseAsync(['--check'], { from: 'user' });
+
+    const output = captured();
+    expect(output).toContain('OpenCode');
+    expect(output).toContain('2.0.0');
+    expect(output).toContain('Could not check OpenAI Codex CLI for updates');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
+  });
+
   it('never offers the hardcoded fallback as an update when the live lookup fails', async () => {
     const agent = liveTrackedAgent('@codemie-test/lookup-fails');
     registryMock.getAgent.mockReturnValue(agent as never);
@@ -402,7 +426,7 @@ describe('createUpdateCommand', () => {
     });
   });
 
-  it('updates Claude to the live tracked version through its own installer, not npm', async () => {
+  it('updates Claude to the exact version it offered, through its own installer, not npm', async () => {
     const agent = {
       name: 'claude',
       displayName: 'Claude Code',
@@ -418,7 +442,8 @@ describe('createUpdateCommand', () => {
 
     await createUpdateCommand().parseAsync(['claude'], { from: 'user' });
 
-    expect(agent.installVersion).toHaveBeenCalledWith('supported');
+    // The version the check displayed — not 'supported' re-resolved through the cache.
+    expect(agent.installVersion).toHaveBeenCalledWith('2.0.0');
     expect(npmMock.installGlobal).not.toHaveBeenCalled();
   });
 

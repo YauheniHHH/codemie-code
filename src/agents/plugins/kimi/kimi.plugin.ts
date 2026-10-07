@@ -348,6 +348,7 @@ export class KimiPlugin extends BaseAgentAdapter {
         agentName: this.metadata.name,
         npmPackage: this.metadata.npmPackage,
         fallbackSupportedVersion: this.metadata.supportedVersion,
+        minimumSupportedVersion: this.metadata.minimumSupportedVersion,
       });
       resolvedVersion = resolved === 'latest' ? undefined : resolved;
       logger.debug('Resolved version', {

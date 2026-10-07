@@ -131,6 +131,22 @@ describe('resolveSupportedVersionDetailed', () => {
     });
   });
 
+  it('is not live when the registry reports a latest below the minimum (lagging mirror)', async () => {
+    getCachedLatestVersion.mockResolvedValue('0.140.0');
+
+    await expect(
+      resolveSupportedVersionDetailed({ ...input, minimumSupportedVersion: '0.143.0' })
+    ).resolves.toEqual({ version: '0.154.0', isCurrent: false });
+  });
+
+  it('is live when the registry latest equals the minimum', async () => {
+    getCachedLatestVersion.mockResolvedValue('0.143.0');
+
+    await expect(
+      resolveSupportedVersionDetailed({ ...input, minimumSupportedVersion: '0.143.0' })
+    ).resolves.toEqual({ version: '0.143.0', isCurrent: true });
+  });
+
   it('is not live when version checks are disabled, and skips the lookup', async () => {
     checksOff();
 

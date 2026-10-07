@@ -197,6 +197,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         agentName: this.metadata.name,
         npmPackage: this.metadata.npmPackage,
         fallbackSupportedVersion: this.metadata.supportedVersion,
+        minimumSupportedVersion: this.metadata.minimumSupportedVersion,
       });
       logger.debug('Resolved version', {
         from: 'supported',
@@ -295,6 +296,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       agentName: this.metadata.name,
       npmPackage: this.metadata.npmPackage,
       fallbackSupportedVersion: this.metadata.supportedVersion,
+      minimumSupportedVersion: this.metadata.minimumSupportedVersion,
     });
     const versionKnown = Boolean(isCurrent && resolved);
     const supportedVersion = isCurrent && resolved ? resolved : 'latest';
@@ -553,8 +555,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Version handling (EPMCDME-13734): known-broken versions are refused,
     // everything else gets a one-time notice — no prompts, no re-nagging.
     // Resolve once and share: each check would otherwise do its own live lookup,
-    // doubling the wait on every offline launch.
-    const compat = this.metadata.supportedVersion ? await this.checkVersionCompatibility() : undefined;
+    // doubling the wait on every offline launch. A failure here must never stop the launch:
+    // both checks then fall back to their own guarded lookup, which logs it. (No logging here:
+    // `logger` is redeclared later in run(), so referencing it in this handler would throw.)
+    const compat = this.metadata.supportedVersion
+      ? await this.checkVersionCompatibility().catch(() => undefined)
+      : undefined;
     await this.blockIfBelowMinimum(compat);
     await this.warnOnceIfUntested(compat);
 

@@ -67,7 +67,12 @@ export async function setup(): Promise<void> {
     resolve(root, 'dist/agents/plugins/claude/claude.plugin.js')
   ) as {
     ClaudePlugin: new () => { installVersion(v: string): Promise<void> };
-    ClaudePluginMetadata: { name: string; npmPackage?: string | null; supportedVersion?: string };
+    ClaudePluginMetadata: {
+      name: string;
+      npmPackage?: string | null;
+      supportedVersion?: string;
+      minimumSupportedVersion?: string;
+    };
   };
   const { resolveSupportedInstallVersion } = await import(
     resolve(root, 'dist/agents/core/version-resolution.js')
@@ -76,6 +81,7 @@ export async function setup(): Promise<void> {
       agentName: string;
       npmPackage?: string | null;
       fallbackSupportedVersion?: string;
+      minimumSupportedVersion?: string;
     }): Promise<string>;
   };
 
@@ -92,6 +98,7 @@ export async function setup(): Promise<void> {
     agentName: ClaudePluginMetadata.name,
     npmPackage: ClaudePluginMetadata.npmPackage,
     fallbackSupportedVersion: ClaudePluginMetadata.supportedVersion,
+    minimumSupportedVersion: ClaudePluginMetadata.minimumSupportedVersion,
   });
   const installedVersion = readInstalledClaudeVersion();
 

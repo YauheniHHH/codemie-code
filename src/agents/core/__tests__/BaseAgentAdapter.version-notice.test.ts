@@ -258,6 +258,19 @@ describe('run() below the minimum supported version', () => {
     expect(noticeSpy).toHaveBeenCalledWith(await compatSpy.mock.results[0].value);
   });
 
+  it('keeps launching when the shared version check fails for an agent without a minimum', async () => {
+    // Without a minimum there is no hard gate, so a failing advisory check must not stop run().
+    const adapter = await adapterFor('2.1.230', { minimumSupportedVersion: undefined });
+    vi.spyOn(adapter, 'checkVersionCompatibility').mockRejectedValue(new Error('lookup blew up'));
+    const noticeSpy = vi
+      .spyOn(adapter, 'warnOnceIfUntested')
+      .mockRejectedValue(new Error('stop after version checks'));
+
+    // Reaching the notice step proves the failed check did not abort run().
+    await expect(adapter.run([])).rejects.toThrow('stop after version checks');
+    expect(noticeSpy).toHaveBeenCalledWith(undefined);
+  });
+
   it('throws in silent mode so ACP callers get a structured error', async () => {
     const adapter = await adapterFor('2.1.100', { silentMode: true });
 

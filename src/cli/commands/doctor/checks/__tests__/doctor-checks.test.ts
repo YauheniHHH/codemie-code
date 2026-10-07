@@ -313,6 +313,30 @@ describe('AgentsCheck', () => {
     expect(result.details[0].message).toContain('tracking v2.1.0');
   });
 
+  it.each([
+    ['claude', 'Claude Code', 'ok'],
+    ['copilot-cli', 'Copilot CLI', 'warn'],
+  ])('reports %s installed ahead of its tracked version as %s (no downgrade hint when live-tracked)', async (
+    name,
+    displayName,
+    status
+  ) => {
+    h.getInstalledAgentsMock.mockResolvedValue([
+      {
+        name,
+        displayName,
+        metadata: { supportedVersion: '2.1.0' },
+        getVersion: async () => '2.2.0',
+        checkVersionCompatibility: async () => ({
+          compatible: false, installedVersion: '2.2.0', supportedVersion: '2.1.0',
+          isNewer: true, hasUpdate: false, isBelowMinimum: false, versionKnown: true,
+        }),
+      },
+    ]);
+    const result = await new AgentsCheck().run();
+    expect(result.details[0]).toMatchObject({ status });
+  });
+
   it('stays ok, never "tracking vlatest", when the tracked version is unknown', async () => {
     h.getInstalledAgentsMock.mockResolvedValue([
       {

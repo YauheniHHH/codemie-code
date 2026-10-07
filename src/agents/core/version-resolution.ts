@@ -1,5 +1,5 @@
 import { getCachedLatestVersion } from '@/utils/version-cache.js';
-import { extractVersion } from '@/utils/version-utils.js';
+import { compareVersions, extractVersion } from '@/utils/version-utils.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
 
@@ -32,6 +32,8 @@ export interface ResolveSupportedVersionInput {
   agentName: string;
   npmPackage?: string | null;
   fallbackSupportedVersion?: string;
+  /** The agent's hard minimum; a live version below it is not treated as current. */
+  minimumSupportedVersion?: string;
   /** Always query the registry instead of a fresh cache entry (explicit `codemie update`). */
   bypassCache?: boolean;
 }
@@ -101,7 +103,7 @@ export interface ResolvedSupportedVersion {
 export async function resolveSupportedVersionDetailed(
   input: ResolveSupportedVersionInput
 ): Promise<ResolvedSupportedVersion> {
-  const { agentName, npmPackage, fallbackSupportedVersion, bypassCache } = input;
+  const { agentName, npmPackage, fallbackSupportedVersion, minimumSupportedVersion, bypassCache } = input;
   const fallback: ResolvedSupportedVersion = { version: fallbackSupportedVersion, isCurrent: false };
 
   if (!(await isVersionChecksEnabled())) {
@@ -122,6 +124,16 @@ export async function resolveSupportedVersionDetailed(
       return fallback;
     }
     const extracted = live ? extractVersion(live) : null;
+    // A lagging mirror or a mis-set dist-tag can report a `latest` below the hard minimum;
+    // tracking it would advise (and install) a version the minimum gate then refuses.
+    if (extracted && minimumSupportedVersion && compareVersions(extracted, minimumSupportedVersion) < 0) {
+      logger.debug('[resolveSupportedVersion] live version is below the minimum, using fallback', {
+        agentName,
+        live: extracted,
+        minimumSupportedVersion,
+      });
+      return fallback;
+    }
     return extracted ? { version: extracted, isCurrent: true } : fallback;
   } catch (error) {
     logger.debug('[resolveSupportedVersion] live lookup failed, using fallback', { agentName, error: String(error) });

@@ -753,6 +753,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
         agentName: metadata.name,
         npmPackage: metadata.npmPackage,
         fallbackSupportedVersion: metadata.supportedVersion,
+        minimumSupportedVersion: metadata.minimumSupportedVersion,
       });
       logger.debug('Resolved version', {
         from: 'supported',

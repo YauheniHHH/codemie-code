@@ -74,7 +74,8 @@ describe('install command version selection', () => {
     await command.parseAsync(['node', 'codemie', 'codex']);
 
     expect(checkVersionCompatibility).toHaveBeenCalled();
-    expect(installVersion).toHaveBeenCalledWith('supported');
+    // The exact tracked version that was shown, not 'supported' re-resolved.
+    expect(installVersion).toHaveBeenCalledWith('0.129.0');
     expect(restoreCliBinLinkMock).toHaveBeenCalledOnce();
     expect(spinnerSucceedMock).toHaveBeenCalledWith(
       'OpenAI Codex CLI v0.129.0 installed successfully'
@@ -210,7 +211,7 @@ describe('install command version selection', () => {
 
     await command.parseAsync(['node', 'codemie', 'claude']);
 
-    expect(installVersion).toHaveBeenCalledWith('supported');
+    expect(installVersion).toHaveBeenCalledWith('2.1.34');
     // must show the version from installVersion(), not the stale '2.1.33' from getVersion()
     expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
   });

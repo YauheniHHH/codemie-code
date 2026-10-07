@@ -224,7 +224,11 @@ export function createInstallCommand(): Command {
             // Use installVersion if available and version specified
             let installedVersion: string | null = null;
             if (versionToInstall && agent.installVersion) {
-              installedVersion = await agent.installVersion(versionToInstall);
+              // Install the tracked version shown above, not 'supported' re-resolved — a second
+              // lookup could return a different value than the one the user just confirmed.
+              const target =
+                versionToInstall === 'supported' && actualVersionToInstall ? actualVersionToInstall : versionToInstall;
+              installedVersion = await agent.installVersion(target);
             } else {
               await agent.install();
             }

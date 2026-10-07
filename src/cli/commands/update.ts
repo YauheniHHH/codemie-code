@@ -99,6 +99,7 @@ async function checkAgentForUpdate(
       agentName: agent.name,
       npmPackage,
       fallbackSupportedVersion: agent.metadata.supportedVersion,
+      minimumSupportedVersion: agent.metadata.minimumSupportedVersion,
       bypassCache: true,
     });
     latestVersion = resolved.isCurrent ? resolved.version : null;
@@ -204,9 +205,10 @@ async function promptAgentSelection(outdated: UpdateCheckResult[]): Promise<stri
  * Update a single agent
  */
 async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<void> {
-  // Special handling for Claude (uses native installer)
+  // Special handling for Claude (uses native installer). Install the exact version the check
+  // offered rather than re-resolving 'supported', which could read a different cached value.
   if (agent.name === 'claude' && agent.installVersion) {
-    await agent.installVersion('supported');
+    await agent.installVersion(latestVersion);
   } else if (agent.metadata.isBuiltIn) {
     // Special handling for built-in agent — update the CLI package
     await npm.installGlobal(CLI_PACKAGE_NAME, { version: latestVersion, force: true });
