@@ -135,11 +135,13 @@ export function createInstallCommand(): Command {
             // with the tracked version unknown this stays a plain install of the latest release.
             const compat = await agent.checkVersionCompatibility();
             if (compat.liveBelowMinimum) {
-              // The latest release is the one the minimum gate refuses to launch.
-              exitBelowMinimum(agent, compat);
-              return;
-            }
-            if (compat.versionKnown !== false) {
+              // The latest release is the one the minimum gate refuses to launch. Only stop
+              // when an install would happen; an installed agent stays the usual no-op below.
+              if (!(await agent.isInstalled())) {
+                exitBelowMinimum(agent, compat);
+                return;
+              }
+            } else if (compat.versionKnown !== false) {
               versionToInstall = 'supported';
               actualVersionToInstall = compat.supportedVersion;
             }

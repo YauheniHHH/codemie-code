@@ -84,6 +84,9 @@ export async function setup(): Promise<void> {
       minimumSupportedVersion?: string;
     }): Promise<string>;
   };
+  const { compareVersions } = await import(
+    resolve(root, 'dist/utils/version-utils.js')
+  ) as { compareVersions(version1: string, version2: string): number };
 
   const readInstalledClaudeVersion = (): string | null => {
     try {
@@ -102,9 +105,15 @@ export async function setup(): Promise<void> {
   });
   const installedVersion = readInstalledClaudeVersion();
 
-  // With the tracked version unknown ('latest'), any installed Claude is kept: there is
-  // nothing concrete to compare against, and reinstalling would gain nothing.
-  if (installedVersion && (installedVersion === targetVersion || targetVersion === 'latest')) {
+  // With the tracked version unknown ('latest'), an installed Claude is kept only while it
+  // still meets the minimum the plugin refuses to launch below; otherwise it is reinstalled.
+  const minimumVersion = ClaudePluginMetadata.minimumSupportedVersion;
+  const meetsMinimum = (version: string): boolean =>
+    !minimumVersion || compareVersions(version, minimumVersion) >= 0;
+  if (
+    installedVersion &&
+    (installedVersion === targetVersion || (targetVersion === 'latest' && meetsMinimum(installedVersion)))
+  ) {
     console.log(`[agent-integration] claude CLI ${installedVersion} already installed — skipping.\n`);
   } else {
     console.log(

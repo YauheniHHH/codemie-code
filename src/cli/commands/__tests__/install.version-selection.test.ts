@@ -237,6 +237,22 @@ describe('install command version selection', () => {
       expectStoppedWithBelowMinimumError(agent);
     });
 
+    it('a plain install of an already installed agent stays a no-op instead of erroring', async () => {
+      const agent = codexWithLaggingRegistry(true);
+      getAgentMock.mockReturnValue(agent);
+
+      const { createInstallCommand } = await import('../install.js');
+      await createInstallCommand().parseAsync(['node', 'codemie', 'codex']);
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(agent.install).not.toHaveBeenCalled();
+      expect(agent.installVersion).not.toHaveBeenCalled();
+      expect(promptMock).not.toHaveBeenCalled();
+      const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+      expect(printed).toContain('is already installed');
+    });
+
     it('--supported stops without offering a reinstall of the latest release', async () => {
       const agent = codexWithLaggingRegistry(true);
       getAgentMock.mockReturnValue(agent);
