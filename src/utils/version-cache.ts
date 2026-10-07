@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname } from 'path';
 import { logger } from './logger.js';
-import { fetchLatestVersionFromRegistry } from './npm-registry.js';
+import { fetchLatestVersionFromRegistry, resolveRegistry } from './npm-registry.js';
 import { getCodemiePath } from './paths.js';
 
 const TTL_MS = 24 * 60 * 60 * 1000;
@@ -128,11 +128,14 @@ export async function getCachedLatestVersion(
   packageName: string,
   options: { bypassCache?: boolean } = {}
 ): Promise<string | null> {
+  // Keyed by registry as well as package, so an answer (or failure) from one registry is never
+  // served to a lookup that would ask another one.
+  const key = `${resolveRegistry(packageName)}|${packageName}`;
   if (!options.bypassCache) {
     const cache = await loadCache();
-    const entry = cache.packages[packageName];
+    const entry = cache.packages[key];
     if (entry && isWithin(entry.fetchedAt, TTL_MS)) return entry.version;
-    if (isWithin(cache.failures[packageName], FAILURE_BACKOFF_MS)) {
+    if (isWithin(cache.failures[key], FAILURE_BACKOFF_MS)) {
       logger.debug('[version-cache] skipping lookup after a recent failure', { packageName });
       return null;
     }
@@ -146,14 +149,14 @@ export async function getCachedLatestVersion(
       reason: fetched ? 'unparsable registry response' : 'no version returned (offline, registry error or timeout)',
     });
     await updateCache(packageName, (cache) => {
-      cache.failures[packageName] = new Date().toISOString();
+      cache.failures[key] = new Date().toISOString();
     });
     return null;
   }
 
   await updateCache(packageName, (cache) => {
-    cache.packages[packageName] = { version, fetchedAt: new Date().toISOString() };
-    delete cache.failures[packageName];
+    cache.packages[key] = { version, fetchedAt: new Date().toISOString() };
+    delete cache.failures[key];
   });
   return version;
 }

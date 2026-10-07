@@ -56,6 +56,7 @@ vi.mock('@/utils/processes.js', async (importOriginal) => {
 // Live-tracked agents read the registry directly; route it to the same mock.
 vi.mock('@/utils/npm-registry.js', () => ({
   fetchLatestVersionFromRegistry: (pkg: string) => npmMock.getLatestVersion(pkg),
+  resolveRegistry: () => 'https://registry.npmjs.org/',
 }));
 
 // restoreCliBinLink — no-op (would otherwise touch the filesystem).
@@ -399,6 +400,26 @@ describe('createUpdateCommand', () => {
       version: '2.0.0',
       force: true,
     });
+  });
+
+  it('updates Claude to the live tracked version through its own installer, not npm', async () => {
+    const agent = {
+      name: 'claude',
+      displayName: 'Claude Code',
+      description: 'd',
+      metadata: { isBuiltIn: false, npmPackage: '@codemie-test/claude-update', supportedVersion: '1.0.0' },
+      isInstalled: vi.fn(async () => true),
+      getVersion: vi.fn(async () => '1.5.0 (Claude Code)'),
+      installVersion: vi.fn(async () => '2.0.0'),
+      warnOnceIfUntested: vi.fn(async () => undefined),
+    };
+    registryMock.getAgent.mockReturnValue(agent as never);
+    npmMock.getLatestVersion.mockResolvedValue('2.0.0');
+
+    await createUpdateCommand().parseAsync(['claude'], { from: 'user' });
+
+    expect(agent.installVersion).toHaveBeenCalledWith('supported');
+    expect(npmMock.installGlobal).not.toHaveBeenCalled();
   });
 
   it('does NOT install in --check mode', async () => {

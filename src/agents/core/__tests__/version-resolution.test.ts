@@ -74,6 +74,13 @@ describe('isVersionChecksEnabled', () => {
     await expect(isVersionChecksEnabled()).resolves.toBe(false);
   });
 
+  it('treats an empty env var as unset, so a config false still applies', async () => {
+    process.env.CODEMIE_VERSION_CHECKS_ENABLED = '';
+    checksOff();
+
+    await expect(isVersionChecksEnabled()).resolves.toBe(false);
+  });
+
   it('lets the env var override the config', async () => {
     process.env.CODEMIE_VERSION_CHECKS_ENABLED = 'true';
     checksOff();

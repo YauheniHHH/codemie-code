@@ -43,10 +43,21 @@ function readNpmrc(file: string): NpmConfig {
   return config;
 }
 
-// npm's own precedence for the settings used here: env var > user .npmrc.
+// When CodeMie runs under `npm run`/`npx`, npm exports its whole effective config — the current
+// project's .npmrc included — as `npm_config_*` env vars, so none of them can be trusted then.
+function launchedByNpm(): boolean {
+  return Boolean(process.env.npm_command || process.env.npm_execpath || process.env.npm_lifecycle_event);
+}
+
+// npm's own precedence for the settings used here: env var > user .npmrc. The env vars are
+// skipped under npm (see launchedByNpm).
 function npmSetting(config: NpmConfig, key: string): string | undefined {
-  const envKey = `npm_config_${key.replace(/-/g, '_')}`;
-  return process.env[envKey] || process.env[envKey.toUpperCase()] || config[key] || undefined;
+  if (!launchedByNpm()) {
+    const envKey = `npm_config_${key.replace(/-/g, '_')}`;
+    const fromEnv = process.env[envKey] || process.env[envKey.toUpperCase()];
+    if (fromEnv) return fromEnv;
+  }
+  return config[key] || undefined;
 }
 
 // User-level config only — never the current project's .npmrc. The lookup runs on every agent
@@ -54,12 +65,15 @@ function npmSetting(config: NpmConfig, key: string): string | undefined {
 // registry or proxy it comes from: it could plant an old release as the tracked version for every
 // project, or route env secrets (`registry=https://host/${TOKEN}/`) to a host of its choosing.
 function loadNpmConfig(): NpmConfig {
-  return readNpmrc(process.env.npm_config_userconfig || process.env.NPM_CONFIG_USERCONFIG || join(homedir(), '.npmrc'));
+  const userConfig = launchedByNpm()
+    ? undefined
+    : process.env.npm_config_userconfig || process.env.NPM_CONFIG_USERCONFIG;
+  return readNpmrc(userConfig || join(homedir(), '.npmrc'));
 }
 
 /**
- * The registry npm would use for this package per the user's npm config (`@scope:registry`, then
- * `registry`); a project's .npmrc is deliberately ignored.
+ * The registry npm would use for this package per the user's npm config (`@scope:registry` from
+ * the user .npmrc, then `registry`); a project's .npmrc is deliberately ignored.
  */
 export function resolveRegistry(packageName: string): string {
   const config = loadNpmConfig();

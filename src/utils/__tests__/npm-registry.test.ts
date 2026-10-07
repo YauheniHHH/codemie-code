@@ -26,6 +26,10 @@ const ENV_KEYS = [
   'NO_PROXY',
   'no_proxy',
   'CODEMIE_NO_SYSTEM_PROXY',
+  // Set when the test runner itself was started via npm/npx; cleared so each test decides.
+  'npm_command',
+  'npm_execpath',
+  'npm_lifecycle_event',
 ];
 const savedEnv: Record<string, string | undefined> = {};
 let workDir: string;
@@ -116,6 +120,26 @@ describe('resolveRegistry', () => {
       expect(resolveRegistry('opencode-ai')).toBe('https://registry.npmjs.org/');
     } finally {
       cwd.mockRestore();
+    }
+  });
+
+  it('ignores npm_config_* env vars when launched via npm/npx, which exports the project .npmrc', async () => {
+    const home = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+    // Under npm even npm_config_userconfig is untrusted, so only ~/.npmrc is read.
+    process.env.HOME = workDir;
+    process.env.USERPROFILE = workDir;
+    try {
+      await writeFile(join(workDir, '.npmrc'), `registry=${baseUrl}\n`, 'utf-8');
+      process.env.npm_command = 'exec';
+      process.env.npm_config_registry = 'https://attacker.invalid/';
+      process.env.npm_config_userconfig = join(workDir, 'attacker-npmrc');
+
+      expect(resolveRegistry('opencode-ai')).toBe(baseUrl);
+    } finally {
+      for (const [key, value] of Object.entries(home)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 

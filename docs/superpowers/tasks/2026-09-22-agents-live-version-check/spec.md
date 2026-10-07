@@ -62,7 +62,10 @@ The registry is queried directly (one HTTPS GET of `<registry>/<name>/latest`, 3
 by spawning `npm view`: measured on a Windows laptop, `npm view` took 2.5–3.8s per package and ~4s
 each when run in parallel, so the original 3s limit was routinely exceeded and the feature silently did
 nothing. The direct request takes well under a second. It honors npm's `registry`, `@scope:registry`,
-`https-proxy`/`proxy` and `noproxy` settings from the user `.npmrc` and `npm_config_*` env vars;
+`https-proxy`/`proxy` and `noproxy` settings from the user `.npmrc`, plus `npm_config_*` env vars for
+the unscoped settings (`@scope:registry` comes from the user `.npmrc` only). When CodeMie was launched
+by npm (`npm run`/`npx`), npm exports the project's `.npmrc` into `npm_config_*`, so the env vars —
+`npm_config_userconfig` included — are ignored and only `~/.npmrc` is read;
 without an npm proxy it uses `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` and then the Windows system proxy /
 PAC. A project `.npmrc` is deliberately **not** read: the result is cached globally for 24h, so a
 checked-out repo that could pick the registry or proxy could plant an old release as the tracked

@@ -46,8 +46,10 @@ export interface ResolveSupportedVersionInput {
  * explicit `false` disables checks; an unreadable config or unrecognized value leaves them on.
  */
 export async function isVersionChecksEnabled(workingDir: string = process.cwd()): Promise<boolean> {
-  const envValue = process.env.CODEMIE_VERSION_CHECKS_ENABLED;
-  if (envValue !== undefined) {
+  // An empty value (e.g. `CODEMIE_VERSION_CHECKS_ENABLED=`) counts as unset, so it can't override
+  // an explicit `false` in the config.
+  const envValue = process.env.CODEMIE_VERSION_CHECKS_ENABLED?.trim();
+  if (envValue) {
     return envValue !== 'false';
   }
 

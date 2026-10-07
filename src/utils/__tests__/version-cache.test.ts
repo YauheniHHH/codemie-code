@@ -3,14 +3,17 @@ import { mkdir, mkdtemp, rm, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-const state = vi.hoisted(() => ({ dir: '' }));
+const state = vi.hoisted(() => ({ dir: '', registry: 'https://registry.npmjs.org/' }));
 const fetchLatest = vi.hoisted(() => vi.fn());
 const warn = vi.hoisted(() => vi.fn());
 
 vi.mock('../paths.js', () => ({
   getCodemiePath: (name: string) => join(state.dir, name),
 }));
-vi.mock('../npm-registry.js', () => ({ fetchLatestVersionFromRegistry: fetchLatest }));
+vi.mock('../npm-registry.js', () => ({
+  fetchLatestVersionFromRegistry: fetchLatest,
+  resolveRegistry: () => state.registry,
+}));
 vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
 }));
@@ -18,18 +21,21 @@ vi.mock('../logger.js', () => ({
 import { getCachedLatestVersion } from '../version-cache.js';
 
 const PKG = '@openai/codex';
+// Cache entries are keyed by registry and package.
+const KEY = `https://registry.npmjs.org/|${PKG}`;
 const HOUR = 60 * 60 * 1000;
 const cacheFile = () => join(state.dir, 'version-cache.json');
 
 async function seedCache(version: string, ageMs: number): Promise<void> {
   const fetchedAt = new Date(Date.now() - ageMs).toISOString();
-  await writeFile(cacheFile(), JSON.stringify({ version: 1, packages: { [PKG]: { version, fetchedAt } } }), 'utf-8');
+  await writeFile(cacheFile(), JSON.stringify({ version: 1, packages: { [KEY]: { version, fetchedAt } } }), 'utf-8');
 }
 
 describe('getCachedLatestVersion', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     state.dir = await mkdtemp(join(tmpdir(), 'codemie-version-cache-'));
+    state.registry = 'https://registry.npmjs.org/';
   });
 
   afterEach(async () => {
@@ -50,7 +56,7 @@ describe('getCachedLatestVersion', () => {
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
     expect(fetchLatest).toHaveBeenCalledWith(PKG, { timeoutMs: 3000 });
     const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
-    expect(saved.packages[PKG].version).toBe('0.160.0');
+    expect(saved.packages[KEY].version).toBe('0.160.0');
   });
 
   it('returns null, not the expired entry, when the lookup fails, and logs it', async () => {
@@ -93,7 +99,7 @@ describe('getCachedLatestVersion', () => {
       expect.objectContaining({ reason: 'unparsable registry response' })
     );
     const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
-    expect(saved.packages[PKG]).toBeUndefined();
+    expect(saved.packages[KEY]).toBeUndefined();
   });
 
   it('passes a prerelease string through unchanged so the resolver can reject it', async () => {
@@ -105,7 +111,7 @@ describe('getCachedLatestVersion', () => {
   it.each([
     ['packages is null', { version: 1, packages: null }],
     ['packages is an array', { version: 1, packages: [] }],
-    ['an entry has the wrong shape', { version: 1, packages: { [PKG]: { version: 42 } } }],
+    ['an entry has the wrong shape', { version: 1, packages: { [KEY]: { version: 42 } } }],
     ['the file is not valid JSON (e.g. a torn write)', '{"version":1,"pack'],
   ])('recovers when %s, and heals the file on the next write', async (_label, content) => {
     await writeFile(cacheFile(), typeof content === 'string' ? content : JSON.stringify(content), 'utf-8');
@@ -113,7 +119,7 @@ describe('getCachedLatestVersion', () => {
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
     const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
-    expect(saved.packages[PKG].version).toBe('0.160.0');
+    expect(saved.packages[KEY].version).toBe('0.160.0');
   });
 
   it('skips lookups for 10 minutes after a failure, then retries', async () => {
@@ -126,12 +132,12 @@ describe('getCachedLatestVersion', () => {
 
     // Age the recorded failure past the backoff window.
     const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
-    saved.failures[PKG] = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    saved.failures[KEY] = new Date(Date.now() - 11 * 60 * 1000).toISOString();
     await writeFile(cacheFile(), JSON.stringify(saved), 'utf-8');
 
     await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
     expect(fetchLatest).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(await readFile(cacheFile(), 'utf-8')).failures[PKG]).toBeUndefined();
+    expect(JSON.parse(await readFile(cacheFile(), 'utf-8')).failures[KEY]).toBeUndefined();
   });
 
   it('retries right away after a failure when the caller bypasses the cache', async () => {
@@ -140,5 +146,17 @@ describe('getCachedLatestVersion', () => {
     await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
     await expect(getCachedLatestVersion(PKG, { bypassCache: true })).resolves.toBe('0.160.0');
     expect(fetchLatest).toHaveBeenCalledTimes(2);
+  });
+
+  it('never serves a version cached from one registry to a lookup against another', async () => {
+    await seedCache('0.150.0', 1 * HOUR); // cached from the public registry
+    state.registry = 'https://mirror.example/';
+    fetchLatest.mockResolvedValue('0.160.0');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
+    expect(fetchLatest).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
+    expect(saved.packages[KEY].version).toBe('0.150.0');
+    expect(saved.packages[`https://mirror.example/|${PKG}`].version).toBe('0.160.0');
   });
 });
