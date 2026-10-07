@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { Duplex } from 'node:stream';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,8 @@ let server: Server;
 let baseUrl: string;
 let handler: (req: IncomingMessage, res: ServerResponse) => void;
 const seenPaths: string[] = [];
+// Targets of CONNECT tunnels the local server was asked to open (it acts as an https proxy).
+const connectTargets: string[] = [];
 
 const ENV_KEYS = [
   'npm_config_registry',
@@ -39,6 +42,10 @@ beforeAll(async () => {
     seenPaths.push(req.url ?? '');
     handler(req, res);
   });
+  server.on('connect', (req: IncomingMessage, socket: Duplex) => {
+    connectTargets.push(req.url ?? '');
+    socket.destroy();
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
 });
@@ -60,6 +67,7 @@ beforeEach(async () => {
   // short timeouts below when the suite runs under full parallel load.
   process.env.CODEMIE_NO_SYSTEM_PROXY = '1';
   seenPaths.length = 0;
+  connectTargets.length = 0;
   handler = (_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ name: '@openai/codex', version: '0.160.0' }));
@@ -232,6 +240,19 @@ describe('fetchLatestVersionFromRegistry', () => {
 
     await expect(fetchFrom('@openai/codex')).resolves.toBe('0.160.0');
     expect(seenPaths).toEqual(['http://registry.example.invalid/@openai%2fcodex/latest']);
+  });
+
+  it("tunnels an https registry through the user .npmrc https-proxy, ignoring HTTP(S)_PROXY", async () => {
+    delete process.env.npm_config_registry;
+    process.env.HTTP_PROXY = 'http://127.0.0.1:1'; // dead; would fail if used
+    process.env.HTTPS_PROXY = 'http://127.0.0.1:1';
+    await writeUserNpmrc(`registry=https://registry.example.invalid/
+https-proxy=${baseUrl}
+`);
+
+    // The proxy closes the tunnel, so the lookup fails — but only after asking for the registry host.
+    await expect(fetchFrom('@openai/codex')).resolves.toBeNull();
+    expect(connectTargets).toEqual(['registry.example.invalid:443']);
   });
 
   it("applies npm's noproxy even when the proxy comes from HTTP_PROXY", async () => {
