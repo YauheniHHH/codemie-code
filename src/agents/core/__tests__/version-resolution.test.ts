@@ -19,6 +19,7 @@ import {
   resolveSupportedInstallVersion,
   resolveSupportedVersionDetailed,
 } from '../version-resolution.js';
+import { AgentInstallationError } from '../../../utils/errors.js';
 
 const input = {
   agentName: 'codex',
@@ -136,7 +137,12 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(
       resolveSupportedVersionDetailed({ ...input, minimumSupportedVersion: '0.143.0' })
-    ).resolves.toEqual({ version: '0.154.0', isCurrent: false, liveBelowMinimum: true });
+    ).resolves.toEqual({
+      version: '0.154.0',
+      isCurrent: false,
+      liveBelowMinimum: true,
+      registryLatestVersion: '0.140.0',
+    });
   });
 
   it('is live when the registry latest equals the minimum', async () => {
@@ -216,12 +222,16 @@ describe('resolveSupportedInstallVersion', () => {
     await expect(resolveSupportedInstallVersion(input)).resolves.toBe('latest');
   });
 
-  it('installs the minimum, not the latest channel, when the registry latest is below it', async () => {
+  it('stops with a specific error, not the latest channel, when the registry latest is below the minimum', async () => {
     // `latest` would resolve to the same lagging release the minimum gate then refuses to launch.
     getCachedLatestVersion.mockResolvedValue('0.140.0');
 
-    await expect(
-      resolveSupportedInstallVersion({ ...input, minimumSupportedVersion: '0.143.0' })
-    ).resolves.toBe('0.143.0');
+    const result = resolveSupportedInstallVersion({ ...input, minimumSupportedVersion: '0.143.0' });
+
+    await expect(result).rejects.toBeInstanceOf(AgentInstallationError);
+    await expect(result).rejects.toThrow(
+      "the registry's latest release v0.140.0 is below the minimum supported v0.143.0 (a lagging mirror?). " +
+        'Install a specific version: codemie install codex <version>'
+    );
   });
 });

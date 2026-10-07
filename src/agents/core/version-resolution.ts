@@ -2,6 +2,8 @@ import { getCachedLatestVersion } from '@/utils/version-cache.js';
 import { compareVersions, extractVersion } from '@/utils/version-utils.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { logger } from '@/utils/logger.js';
+import { AgentInstallationError } from '@/utils/errors.js';
+import { getAgentInstallCommand } from './agent-aliases.js';
 
 // The ticket's four agents; kimi-acp runs the same package and binary as kimi.
 export const LIVE_TRACKED_AGENT_NAMES = ['claude', 'codex', 'gemini', 'kimi', 'kimi-acp'] as const;
@@ -92,10 +94,32 @@ export interface ResolvedSupportedVersion {
   isCurrent: boolean;
   /**
    * Set only when a live-tracked agent's registry `latest` is below its hard minimum (e.g. a
-   * lagging mirror). The install target is then the minimum rather than the `latest` channel,
-   * which would resolve to that same refused release.
+   * lagging mirror). The tracked version is then unknown, and installing it must stop: the
+   * `latest` channel would resolve to that same release the minimum gate refuses.
    */
   liveBelowMinimum?: true;
+  /** The registry `latest` that was rejected; set together with `liveBelowMinimum`. */
+  registryLatestVersion?: string;
+}
+
+/**
+ * Why an install of the tracked version cannot proceed when the registry `latest` is below the
+ * agent's hard minimum, with the command to install an explicit version instead.
+ *
+ * @param agentName - agent metadata `name`
+ * @param registryLatestVersion - the registry's `latest` release
+ * @param minimumSupportedVersion - the agent's hard minimum
+ */
+export function liveBelowMinimumReason(
+  agentName: string,
+  registryLatestVersion: string,
+  minimumSupportedVersion: string
+): string {
+  return (
+    `the registry's latest release v${registryLatestVersion} is below the minimum supported ` +
+    `v${minimumSupportedVersion} (a lagging mirror?). ` +
+    `Install a specific version: ${getAgentInstallCommand(agentName)} <version>`
+  );
 }
 
 /**
@@ -138,7 +162,7 @@ export async function resolveSupportedVersionDetailed(
         live: extracted,
         minimumSupportedVersion,
       });
-      return { ...fallback, liveBelowMinimum: true };
+      return { ...fallback, liveBelowMinimum: true, registryLatestVersion: extracted };
     }
     return extracted ? { version: extracted, isCurrent: true } : fallback;
   } catch (error) {
@@ -149,15 +173,19 @@ export async function resolveSupportedVersionDetailed(
 
 /**
  * Install target for `installVersion('supported')`: the current tracked version, or the `latest`
- * channel when it is unknown (checks off, lookup failed). When the registry `latest` is below the
- * hard minimum, the minimum itself, since `latest` would install the release the minimum gate
- * refuses. Never a stale fallback, which can be far behind upstream and would install — or
- * downgrade to — an old release.
+ * channel when it is unknown (checks off, lookup failed). Never a stale fallback, which can be far
+ * behind upstream and would install — or downgrade to — an old release.
+ *
+ * @throws {AgentInstallationError} when the registry `latest` is below the hard minimum: the
+ * `latest` channel would install the release the minimum gate refuses to launch.
  */
 export async function resolveSupportedInstallVersion(input: ResolveSupportedVersionInput): Promise<string> {
-  const { version, isCurrent, liveBelowMinimum } = await resolveSupportedVersionDetailed(input);
-  if (liveBelowMinimum && input.minimumSupportedVersion) {
-    return input.minimumSupportedVersion;
+  const { version, isCurrent, liveBelowMinimum, registryLatestVersion } = await resolveSupportedVersionDetailed(input);
+  if (liveBelowMinimum && registryLatestVersion && input.minimumSupportedVersion) {
+    throw new AgentInstallationError(
+      input.agentName,
+      liveBelowMinimumReason(input.agentName, registryLatestVersion, input.minimumSupportedVersion)
+    );
   }
   return isCurrent && version ? version : 'latest';
 }

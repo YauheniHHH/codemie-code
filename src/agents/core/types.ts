@@ -206,6 +206,10 @@ export interface VersionCompatibilityResult {
   // false when checks are off or the live lookup failed: supportedVersion is then 'latest'
   // and no "tracking vX" notice may be shown. Optional so older mocks/callers stay valid.
   versionKnown?: boolean;
+  // true when the registry's latest release is below minimumSupportedVersion (e.g. a lagging
+  // mirror): the tracked version is unknown, and installing it must stop rather than install that release.
+  liveBelowMinimum?: boolean;
+  registryLatestVersion?: string;    // the rejected registry latest; set with liveBelowMinimum
 }
 
 /**

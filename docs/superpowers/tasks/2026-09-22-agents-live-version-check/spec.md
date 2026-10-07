@@ -92,7 +92,9 @@ resort. One shared accessor, `resolveSupportedVersionDetailed()` in
    comparison.
 3. For an allowlisted agent the version cache is consulted for its npm package, extracting the version
    with the existing `extractVersion()` convention. Only a successful lookup is current. A failed
-   lookup or a prerelease value returns the fallback with `isCurrent: false`.
+   lookup or a prerelease value returns the fallback with `isCurrent: false`. So does a registry
+   `latest` below the agent's `minimumSupportedVersion` (a lagging mirror or a mis-set dist-tag),
+   which the result also flags as `liveBelowMinimum` together with that `registryLatestVersion`.
 4. Any other agent with a pinned version (e.g. Copilot CLI) keeps it as current, exactly as before.
 
 `checkVersionCompatibility()` exposes `isCurrent` as `versionKnown`. When it is `false`, the result
@@ -101,6 +103,12 @@ doctor`, `codemie setup` and `codemie update` then behave as if no supported ver
 The `minimumSupportedVersion` gate is computed independently and still applies in every case.
 `installVersion('supported')` (`resolveSupportedInstallVersion()`) installs the current version, or
 the `latest` channel when it is unknown — never the stale constant, which can be far behind upstream.
+When the registry `latest` is below the minimum, the tracked version is unknown at launch (no
+notice), and any install of the tracked version stops with an `AgentInstallationError` naming the
+registry latest and the minimum and pointing at `codemie install <agent> <version>`: the `latest`
+channel would install the very release the minimum gate refuses. `checkVersionCompatibility()`
+passes `liveBelowMinimum`/`registryLatestVersion` through, so `codemie install --supported` and the
+plain `codemie install claude|codex` default stop with that error instead of installing `latest`.
 `run()` resolves compatibility once and shares it between the minimum gate and the notice.
 
 `checkVersionCompatibility()` (`BaseAgentAdapter.ts:284`) becomes async and calls this accessor
@@ -177,7 +185,8 @@ Once the number follows npm rather than a hand-tested pin, every string that say
   their own `workspace` block, and the env var works without an active profile.
 - An invalid or unrecognized stored value for the toggle resolves to "checks enabled."
 - `install --supported` with an unknown tracked version installs the latest release, and asks first
-  when the agent is already installed.
+  when the agent is already installed. When the registry `latest` is below the agent's minimum, it
+  installs nothing and stops with an error naming both versions.
 - No user-facing string claims CodeMie "tested", "verified" or "recommends" a version; they use the
   §5 "tracking" framing. Other copy changes are limited to the checks-disabled notes in
   `codemie update` / `codemie install --supported`, and hiding the "Latest tracked version" line of
@@ -216,5 +225,4 @@ Once the number follows npm rather than a hand-tested pin, every string that say
 - Private npm registries that require authentication aren't supported by the direct lookup; for
   those users the tracked version stays unknown (no notice), which fails safely.
 - Known, pre-existing and out of scope: `codemie update kimi` updates the npm package, not the
-  native Kimi binary; a malformed installed version skips the minimum gate; `setup` shows a green
-  check for a below-minimum Claude.
+  native Kimi binary; a malformed installed version skips the minimum gate.

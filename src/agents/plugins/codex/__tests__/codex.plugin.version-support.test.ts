@@ -144,6 +144,29 @@ describe('CodexPlugin version support', () => {
     expect(compat.isBelowMinimum).toBe(false);
   });
 
+  it.each([
+    ['installed', { code: 0, stdout: 'codex-cli 0.150.0\n', stderr: '' }],
+    ['not installed', { code: 1, stdout: '', stderr: 'not found' }],
+  ])('surfaces a registry latest below the minimum when %s', async (_label, execResult) => {
+    const resolution = await import('../../../core/version-resolution.js');
+    vi.mocked(resolution.resolveSupportedVersionDetailed).mockResolvedValueOnce({
+      version: '0.154.0',
+      isCurrent: false,
+      liveBelowMinimum: true,
+      registryLatestVersion: '0.140.0',
+    });
+    const processes = await import('../../../../utils/processes.js');
+    vi.mocked(processes.exec).mockResolvedValue(execResult);
+
+    const { CodexPlugin } = await import('../codex.plugin.js');
+    const compat = await new CodexPlugin().checkVersionCompatibility();
+
+    expect(compat.versionKnown).toBe(false);
+    expect(compat.supportedVersion).toBe('latest');
+    expect(compat.liveBelowMinimum).toBe(true);
+    expect(compat.registryLatestVersion).toBe('0.140.0');
+  });
+
   it('marks Codex versions below the minimum supported version as below minimum', async () => {
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({

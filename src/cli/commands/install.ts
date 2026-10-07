@@ -4,7 +4,8 @@ import { getAgentInstallCommand, getAgentLauncherCommand, getUserFacingAgentName
 import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
-import type { AgentInstallationOptions } from '@/agents/core/types.js';
+import type { AgentAdapter, AgentInstallationOptions, VersionCompatibilityResult } from '@/agents/core/types.js';
+import { isLiveTrackedAgent, liveBelowMinimumReason } from '@/agents/core/version-resolution.js';
 import {
   STATUSLINE_NAME,
   STATUSLINE_DISPLAY_NAME,
@@ -106,6 +107,8 @@ export function createInstallCommand(): Command {
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
           let trackedVersionUnknown = false;
+          // Neither pinned nor live-tracked (e.g. opencode, pi): --supported has no tracked version to install.
+          const hasNoTrackedVersion = !agent.metadata?.supportedVersion && !isLiveTrackedAgent(agent.name);
 
           // Priority: --supported flag > version argument > 'supported' (default for Claude) > undefined (latest)
           if (options?.supported) {
@@ -113,6 +116,10 @@ export function createInstallCommand(): Command {
             // Resolve 'supported' to actual version for display and comparison
             if (agent.checkVersionCompatibility) {
               const compat = await agent.checkVersionCompatibility();
+              if (compat.liveBelowMinimum) {
+                exitBelowMinimum(agent, compat);
+                return;
+              }
               if (compat.versionKnown === false) {
                 // installVersion('supported') then installs the latest release, not the stale fallback
                 trackedVersionUnknown = true;
@@ -127,11 +134,20 @@ export function createInstallCommand(): Command {
             // Default to supported version for agents whose backend compatibility is version-sensitive;
             // with the tracked version unknown this stays a plain install of the latest release.
             const compat = await agent.checkVersionCompatibility();
+            if (compat.liveBelowMinimum) {
+              // The latest release is the one the minimum gate refuses to launch.
+              exitBelowMinimum(agent, compat);
+              return;
+            }
             if (compat.versionKnown !== false) {
               versionToInstall = 'supported';
               actualVersionToInstall = compat.supportedVersion;
             }
           }
+
+          const unknownTrackedReason = hasNoTrackedVersion
+            ? `${agent.displayName} has no tracked version`
+            : 'the tracked version is unavailable (version checks disabled or npm unreachable)';
 
           // Check if already installed with matching version
           if (await agent.isInstalled()) {
@@ -182,7 +198,7 @@ export function createInstallCommand(): Command {
               const installedDisplay = installedVersion ? ` v${installedVersion}` : '';
               console.log(
                 chalk.yellow(
-                  `${agent.displayName}${installedDisplay} is already installed; the tracked version is unavailable (version checks disabled or npm unreachable).`
+                  `${agent.displayName}${installedDisplay} is already installed; ${unknownTrackedReason}.`
                 )
               );
               const inquirer = (await import('inquirer')).default;
@@ -213,7 +229,9 @@ export function createInstallCommand(): Command {
           if (trackedVersionUnknown) {
             console.log(
               chalk.dim(
-                'Tracked version unavailable (version checks disabled or npm unreachable) — installing the latest release.'
+                hasNoTrackedVersion
+                  ? `${unknownTrackedReason} — installing the latest release.`
+                  : 'Tracked version unavailable (version checks disabled or npm unreachable) — installing the latest release.'
               )
             );
           }
@@ -388,4 +406,19 @@ export function createInstallCommand(): Command {
     });
 
   return command;
+}
+
+/**
+ * Stop an install of the tracked version when the registry's latest release is below the agent's
+ * hard minimum (e.g. a lagging mirror): installing `latest` would install a release the minimum
+ * gate then refuses to launch.
+ */
+function exitBelowMinimum(agent: AgentAdapter, compat: VersionCompatibilityResult): void {
+  const reason = liveBelowMinimumReason(
+    agent.name,
+    compat.registryLatestVersion ?? 'unknown',
+    compat.minimumSupportedVersion ?? 'unknown'
+  );
+  console.error(chalk.red(`✗ ${agent.displayName}: ${reason}`));
+  process.exit(1);
 }

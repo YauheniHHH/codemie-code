@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getAgentMock = vi.fn();
 const restoreCliBinLinkMock = vi.fn();
@@ -179,6 +179,108 @@ describe('install command version selection', () => {
     expect(install).not.toHaveBeenCalled();
     const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
     expect(printed).toContain('is already installed');
+  });
+
+  function codexWithLaggingRegistry(installed: boolean) {
+    return {
+      ...codexWithUnknownTrackedVersion(installed),
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: installed ? '0.150.0' : null,
+        compatible: installed,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion: '0.143.0',
+        versionKnown: false,
+        liveBelowMinimum: true,
+        registryLatestVersion: '0.140.0',
+      }),
+    };
+  }
+
+  describe('when the registry latest is below the minimum', () => {
+    let exitSpy: ReturnType<typeof vi.spyOn>;
+    let errorSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+      errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    function expectStoppedWithBelowMinimumError(agent: ReturnType<typeof codexWithLaggingRegistry>): void {
+      expect(agent.install).not.toHaveBeenCalled();
+      expect(agent.installVersion).not.toHaveBeenCalled();
+      expect(promptMock).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      const errors = errorSpy.mock.calls.flat().join('\n');
+      expect(errors).toContain(
+        "OpenAI Codex CLI: the registry's latest release v0.140.0 is below the minimum supported v0.143.0"
+      );
+      expect(errors).toContain('codemie install codex <version>');
+      const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+      expect(printed).not.toContain('Tracked version unavailable');
+    }
+
+    it('a plain install stops instead of installing the lagging latest release', async () => {
+      const agent = codexWithLaggingRegistry(false);
+      getAgentMock.mockReturnValue(agent);
+
+      const { createInstallCommand } = await import('../install.js');
+      await createInstallCommand().parseAsync(['node', 'codemie', 'codex']);
+
+      expectStoppedWithBelowMinimumError(agent);
+    });
+
+    it('--supported stops without offering a reinstall of the latest release', async () => {
+      const agent = codexWithLaggingRegistry(true);
+      getAgentMock.mockReturnValue(agent);
+      promptMock.mockResolvedValue({ confirm: true });
+
+      const { createInstallCommand } = await import('../install.js');
+      await createInstallCommand().parseAsync(['node', 'codemie', 'codex', '--supported']);
+
+      expectStoppedWithBelowMinimumError(agent);
+    });
+  });
+
+  it('--supported on an agent with no tracked version says so and installs the latest release', async () => {
+    const installVersion = vi.fn().mockResolvedValue('1.2.0');
+    getAgentMock.mockReturnValue({
+      name: 'opencode',
+      displayName: 'OpenCode',
+      description: 'OpenCode',
+      metadata: { name: 'opencode', npmPackage: 'opencode-ai' },
+      isInstalled: vi.fn().mockResolvedValue(false),
+      install: vi.fn().mockResolvedValue(undefined),
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: 'latest',
+        installedVersion: null,
+        compatible: false,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        versionKnown: false,
+      }),
+      getVersion: vi.fn().mockResolvedValue('1.2.0'),
+      warnOnceIfUntested: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    await createInstallCommand().parseAsync(['node', 'codemie', 'opencode', '--supported']);
+
+    expect(installVersion).toHaveBeenCalledWith('supported');
+    const printed = vi.mocked(console.log).mock.calls.flat().join('\n');
+    expect(printed).toContain('OpenCode has no tracked version');
+    expect(printed).toContain('installing the latest release');
+    expect(printed).not.toContain('version checks disabled');
+    expect(printed).not.toContain('npm unreachable');
   });
 
   it('uses the version returned by installVersion() for the success message', async () => {

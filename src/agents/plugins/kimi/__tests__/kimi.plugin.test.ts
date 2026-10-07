@@ -63,6 +63,17 @@ describe('KimiPlugin', () => {
       );
     });
 
+    it('stops without installing when the tracked version cannot be installed (registry latest below the minimum)', async () => {
+      const { resolveSupportedInstallVersion } = await import('../../../core/version-resolution.js');
+      const error = new AgentInstallationError('kimi', 'below the minimum');
+      vi.mocked(resolveSupportedInstallVersion).mockRejectedValueOnce(error);
+
+      await expect(new KimiPlugin().installVersion('supported')).rejects.toBe(error);
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).not.toHaveBeenCalled();
+    });
+
     it('installs the latest build when the tracked version is unknown', async () => {
       const { resolveSupportedInstallVersion } = await import('../../../core/version-resolution.js');
       vi.mocked(resolveSupportedInstallVersion).mockResolvedValueOnce('latest');

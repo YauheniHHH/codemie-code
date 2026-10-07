@@ -28,6 +28,7 @@ vi.mock('../../../../utils/processes.js', async () => {
 import { ClaudePlugin, ClaudePluginMetadata } from '../claude.plugin.js';
 import { installNativeAgent } from '../../../../utils/native-installer.js';
 import { resolveSupportedInstallVersion } from '../../../core/version-resolution.js';
+import { AgentInstallationError } from '../../../../utils/errors.js';
 
 describe('ClaudePlugin.installVersion', () => {
   beforeEach(() => {
@@ -64,6 +65,14 @@ describe('ClaudePlugin.installVersion', () => {
       'latest',
       expect.any(Object)
     );
+  });
+
+  it("stops without installing when 'supported' cannot be installed (registry latest below the minimum)", async () => {
+    const error = new AgentInstallationError('claude', 'below the minimum');
+    vi.mocked(resolveSupportedInstallVersion).mockRejectedValueOnce(error);
+
+    await expect(new ClaudePlugin().installVersion('supported')).rejects.toBe(error);
+    expect(installNativeAgent).not.toHaveBeenCalled();
   });
 
   it('installs an explicit version as given, without resolving the tracked one', async () => {

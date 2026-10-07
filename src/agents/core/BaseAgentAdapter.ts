@@ -292,7 +292,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * @returns Version compatibility result with status and version info
    */
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
-    const { version: resolved, isCurrent } = await resolveSupportedVersionDetailed({
+    const { version: resolved, isCurrent, liveBelowMinimum, registryLatestVersion } = await resolveSupportedVersionDetailed({
       agentName: this.metadata.name,
       npmPackage: this.metadata.npmPackage,
       fallbackSupportedVersion: this.metadata.supportedVersion,
@@ -301,6 +301,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const versionKnown = Boolean(isCurrent && resolved);
     const supportedVersion = isCurrent && resolved ? resolved : 'latest';
     const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
+    const belowMinimum = liveBelowMinimum ? { liveBelowMinimum: true, registryLatestVersion } : {};
 
     const installedVersion = await this.getVersion();
 
@@ -321,6 +322,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         isBelowMinimum: false,
         minimumSupportedVersion,
         versionKnown,
+        ...belowMinimum,
       };
     }
 
@@ -345,6 +347,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         isBelowMinimum,
         minimumSupportedVersion,
         versionKnown,
+        ...belowMinimum,
       };
     }
 
