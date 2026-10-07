@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname } from 'path';
 import { logger } from './logger.js';
@@ -16,6 +17,32 @@ export const FETCH_TIMEOUT_MS = 3000;
 // A version as the registry reports it. Prerelease/build suffixes are kept (not stripped) so
 // version-resolution can still recognize and reject them.
 const NPM_VERSION_PATTERN = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
+
+// Shape of a key produced by versionCacheKey: `<origin>#<sha256 hex>|<package>`.
+const KEY_PATTERN = /^[^|#\s]+#[0-9a-f]{64}\|/;
+
+/**
+ * Cache key for a package looked up against a registry. Never embeds the resolved registry URL,
+ * which may carry credentials or a token in its userinfo or path: only the URL origin (which
+ * excludes userinfo, path and query) plus a SHA-256 of the full URL, so distinct registries on
+ * one host still get distinct entries.
+ *
+ * @param registry - the resolved registry URL the lookup would ask
+ * @param packageName - npm package name
+ * @returns `<origin>#<sha256(registry)>|<packageName>`; origin is `invalid-registry` when the
+ *   URL cannot be parsed
+ */
+export function versionCacheKey(registry: string, packageName: string): string {
+  let origin = 'invalid-registry';
+  try {
+    origin = new URL(registry).origin;
+  } catch {
+    // keep the placeholder; the raw string must never reach the key
+  }
+  if (origin === 'null') origin = 'invalid-registry';
+  const hash = createHash('sha256').update(registry).digest('hex');
+  return `${origin}#${hash}|${packageName}`;
+}
 
 interface CacheEntry {
   version: string;
@@ -67,12 +94,14 @@ async function loadCache(): Promise<CacheFile> {
     if (!isRecord(parsed?.packages)) {
       return cache;
     }
+    // Keys not in the current format are dropped: legacy raw-URL keys may hold registry
+    // credentials, and dropping them here lets the next save scrub them from disk.
     for (const [name, entry] of Object.entries(parsed.packages)) {
-      if (isCacheEntry(entry)) cache.packages[name] = entry;
+      if (KEY_PATTERN.test(name) && isCacheEntry(entry)) cache.packages[name] = entry;
     }
     if (isRecord(parsed.failures)) {
       for (const [name, failedAt] of Object.entries(parsed.failures)) {
-        if (typeof failedAt === 'string') cache.failures[name] = failedAt;
+        if (KEY_PATTERN.test(name) && typeof failedAt === 'string') cache.failures[name] = failedAt;
       }
     }
     return cache;
@@ -130,7 +159,7 @@ export async function getCachedLatestVersion(
 ): Promise<string | null> {
   // Keyed by registry as well as package, so an answer (or failure) from one registry is never
   // served to a lookup that would ask another one.
-  const key = `${resolveRegistry(packageName)}|${packageName}`;
+  const key = versionCacheKey(resolveRegistry(packageName), packageName);
   if (!options.bypassCache) {
     const cache = await loadCache();
     const entry = cache.packages[key];

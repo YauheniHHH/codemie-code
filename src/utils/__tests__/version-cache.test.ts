@@ -18,11 +18,12 @@ vi.mock('../logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
 }));
 
-import { getCachedLatestVersion } from '../version-cache.js';
+import { getCachedLatestVersion, versionCacheKey } from '../version-cache.js';
 
 const PKG = '@openai/codex';
 // Cache entries are keyed by registry and package.
-const KEY = `https://registry.npmjs.org/|${PKG}`;
+const KEY = versionCacheKey('https://registry.npmjs.org/', PKG);
+const SECRET_REGISTRY = 'https://user:s3cret@npm.example.com/tok-SECRET123/';
 const HOUR = 60 * 60 * 1000;
 const cacheFile = () => join(state.dir, 'version-cache.json');
 
@@ -157,6 +158,62 @@ describe('getCachedLatestVersion', () => {
     expect(fetchLatest).toHaveBeenCalledTimes(1);
     const saved = JSON.parse(await readFile(cacheFile(), 'utf-8'));
     expect(saved.packages[KEY].version).toBe('0.150.0');
-    expect(saved.packages[`https://mirror.example/|${PKG}`].version).toBe('0.160.0');
+    expect(saved.packages[versionCacheKey('https://mirror.example/', PKG)].version).toBe('0.160.0');
+  });
+
+  it('never writes the registry URL, its credentials or path to the cache after a success', async () => {
+    state.registry = SECRET_REGISTRY;
+    fetchLatest.mockResolvedValue('0.160.0');
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBe('0.160.0');
+    const raw = await readFile(cacheFile(), 'utf-8');
+    expect(raw).not.toContain('s3cret');
+    expect(raw).not.toContain('tok-SECRET123');
+    expect(raw).not.toContain('user:');
+    expect(JSON.parse(raw).packages[versionCacheKey(SECRET_REGISTRY, PKG)].version).toBe('0.160.0');
+  });
+
+  it('never writes the registry URL, its credentials or path to the cache after a failure', async () => {
+    state.registry = SECRET_REGISTRY;
+    fetchLatest.mockResolvedValue(null);
+
+    await expect(getCachedLatestVersion(PKG)).resolves.toBeNull();
+    const raw = await readFile(cacheFile(), 'utf-8');
+    expect(raw).not.toContain('s3cret');
+    expect(raw).not.toContain('tok-SECRET123');
+    expect(raw).not.toContain('user:');
+    expect(JSON.parse(raw).failures[versionCacheKey(SECRET_REGISTRY, PKG)]).toEqual(expect.any(String));
+  });
+
+  it('drops legacy raw-URL keys on load so the next write scrubs them, keeping new-format entries', async () => {
+    const legacyKey = `https://u:s3cret@npm.example.com/|${PKG}`;
+    const fetchedAt = new Date(Date.now() - 1 * HOUR).toISOString();
+    await writeFile(
+      cacheFile(),
+      JSON.stringify({
+        version: 1,
+        packages: { [legacyKey]: { version: '0.140.0', fetchedAt }, [KEY]: { version: '0.150.0', fetchedAt } },
+        failures: { [legacyKey]: fetchedAt },
+      }),
+      'utf-8'
+    );
+    fetchLatest.mockResolvedValue('1.0.0');
+
+    await expect(getCachedLatestVersion('@google/gemini-cli')).resolves.toBe('1.0.0');
+    const raw = await readFile(cacheFile(), 'utf-8');
+    expect(raw).not.toContain('s3cret');
+    const saved = JSON.parse(raw);
+    expect(saved.packages[legacyKey]).toBeUndefined();
+    expect(saved.failures[legacyKey]).toBeUndefined();
+    expect(saved.packages[KEY].version).toBe('0.150.0');
+  });
+});
+
+describe('versionCacheKey', () => {
+  it('produces a placeholder origin, never the raw string, for an unparsable registry', () => {
+    const key = versionCacheKey('not a url tok-SECRET123', PKG);
+    expect(key.startsWith('invalid-registry#')).toBe(true);
+    expect(key).not.toContain('tok-SECRET123');
+    expect(key.endsWith(`|${PKG}`)).toBe(true);
   });
 });

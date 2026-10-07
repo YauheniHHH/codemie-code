@@ -46,8 +46,12 @@ Kimi ACP needs its own allowlist entry: the allowlist is keyed by agent name and
 ### 1. Version cache module
 
 New module `src/utils/version-cache.ts` exposing `getCachedLatestVersion(packageName): Promise<string
-| null>`. Persists `{ [packageName]: { version, fetchedAt } }` to a new JSON file under `~/.codemie/`
-(sibling to `version-warnings.json`, not part of the `ConfigLoader` schema). TTL is 24h from
+| null>`. Persists `{ version: 1, packages: { '<registry-id>|<package>': { version, fetchedAt } },
+failures: { '<registry-id>|<package>': failedAt } }` to a new JSON file under `~/.codemie/` (sibling
+to `version-warnings.json`, not part of the `ConfigLoader` schema). The registry id is the resolved
+registry URL's origin without userinfo, plus `#` and a SHA-256 of the full resolved URL, so the file
+never contains credentials or tokens from the registry URL; entries in the older raw-URL key format
+are dropped on load, so the next write removes them from disk. TTL is 24h from
 `fetchedAt` (a `fetchedAt` in the future counts as stale). On a miss it reads the package's `latest`
 version from the npm registry (`src/utils/npm-registry.ts`). A failed lookup (timeout, network,
 non-200, or a response that isn't a version string) returns `null`, never the expired entry, and is
