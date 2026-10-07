@@ -507,7 +507,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return;
     }
 
-    const compat = precomputed ?? await this.checkVersionCompatibility();
+    let compat = precomputed;
+    if (!compat) {
+      try {
+        compat = await this.checkVersionCompatibility();
+      } catch (error) {
+        // An unknown installed version is not a known-broken one: launch rather than block.
+        logger.debug('[BaseAgentAdapter] minimum-version check failed, continuing launch', {
+          agent: this.metadata.name,
+          error: String(error),
+        });
+        return;
+      }
+    }
     if (!compat.isBelowMinimum) {
       return;
     }
