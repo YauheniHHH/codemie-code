@@ -353,6 +353,25 @@ describe('createUpdateCommand', () => {
     expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
   });
 
+  it('reports the built-in agent whose CLI lookup failed instead of "No updatable agents installed"', async () => {
+    registryMock.getManageableAgents.mockReturnValue([
+      {
+        name: 'codemie-code',
+        displayName: 'CodeMie Code',
+        description: 'd',
+        metadata: { isBuiltIn: true, npmPackage: null },
+        isInstalled: vi.fn(async () => true),
+        getVersion: vi.fn(async () => '1.0.0'),
+      },
+    ] as never);
+    npmMock.getLatestVersion.mockResolvedValue(null);
+
+    await createUpdateCommand().parseAsync([], { from: 'user' });
+
+    expect(captured()).toContain('Could not check CodeMie Code for updates');
+    expect(spinner.info).not.toHaveBeenCalledWith('No updatable agents installed');
+  });
+
   it('lists the agents it could check and reports the one whose lookup failed', async () => {
     const opencode = {
       name: 'opencode',

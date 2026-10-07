@@ -782,9 +782,21 @@ async function checkAndInstallClaude(): Promise<void> {
             )
           ]) as VersionCompatibilityResult;
 
-          // Claude is live-tracked: being ahead of the tracked version usually means it
-          // self-updated since the cached lookup, so there is nothing to advise.
-          if (compat.compatible || compat.isNewer) {
+          // Below the hard minimum the launch gate refuses Claude, whatever the tracked version says.
+          if (compat.isBelowMinimum) {
+            console.log();
+            console.log(
+              chalk.yellow(
+                `⚠ Claude Code v${compat.installedVersion} is below the minimum supported version` +
+                  (compat.minimumSupportedVersion ? ` v${compat.minimumSupportedVersion}` : '') +
+                  ' and will not launch'
+              )
+            );
+            console.log(chalk.yellow('Update it using:'), chalk.blueBright('codemie install claude --supported'));
+            console.log();
+          } else if (compat.compatible || compat.isNewer) {
+            // Claude is live-tracked: being ahead of the tracked version usually means it
+            // self-updated since the cached lookup, so there is nothing to advise.
             console.log();
             console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
             console.log();
