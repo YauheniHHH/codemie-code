@@ -255,6 +255,16 @@ https-proxy=${baseUrl}
     expect(connectTargets).toEqual(['registry.example.invalid:443']);
   });
 
+  it('fails the lookup instead of going direct when the configured npm proxy is invalid', async () => {
+    // A loopback host outside the implicit no-proxy list, so the npm proxy setting applies and a
+    // direct request would reach the local registry and succeed.
+    process.env.npm_config_registry = baseUrl.replace('127.0.0.1', '[::ffff:127.0.0.1]');
+    await writeUserNpmrc('proxy=not a proxy url\n');
+
+    await expect(fetchFrom('@openai/codex')).resolves.toBeNull();
+    expect(seenPaths).toEqual([]);
+  });
+
   it("applies npm's noproxy even when the proxy comes from HTTP_PROXY", async () => {
     process.env.npm_config_registry = 'http://registry.example.invalid/';
     process.env.HTTP_PROXY = baseUrl.replace(/\/$/, '');

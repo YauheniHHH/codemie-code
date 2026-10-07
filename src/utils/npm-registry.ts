@@ -13,11 +13,15 @@ import {
   shouldBypassProxy,
   splitRules,
 } from './system-proxy.js';
+import { logger } from './logger.js';
 
 const DEFAULT_REGISTRY = 'https://registry.npmjs.org/';
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 type NpmConfig = Record<string, string>;
+
+// An npm proxy the user configured but that cannot be used; the lookup must not then go direct.
+class InvalidNpmProxyError extends Error {}
 
 // Minimal .npmrc reader: `key=value` lines, `#`/`;` comments, optional surrounding quotes, and
 // `${VAR}` expansion.
@@ -100,11 +104,19 @@ async function proxyAgentFor(url: URL, config: NpmConfig): Promise<HttpAgent | u
     ? npmSetting(config, 'https-proxy') || npmSetting(config, 'proxy')
     : npmSetting(config, 'proxy');
   if (!npmProxy) return getProxyAgentForUrl(url, { keepAlive: false });
-  return isHttps ? new HttpsProxyAgent(npmProxy) : new HttpProxyAgent(npmProxy);
+  try {
+    return isHttps ? new HttpsProxyAgent(npmProxy) : new HttpProxyAgent(npmProxy);
+  } catch (error) {
+    // The value is not logged: a proxy URL can carry credentials.
+    logger.debug('[npm-registry] configured npm proxy is invalid, skipping the lookup', { error: String(error) });
+    throw new InvalidNpmProxyError();
+  }
 }
 
 // Bounds proxy discovery (a registry read and a PAC fetch on Windows) by the caller's deadline;
-// a discovery failure goes direct, as getProxyAgentForUrl itself does.
+// a discovery failure goes direct, as getProxyAgentForUrl itself does. An explicitly configured
+// npm proxy that cannot be built fails the lookup instead: going direct would leave the proxy
+// the user chose.
 async function proxyAgentWithin(
   url: URL,
   config: NpmConfig,
@@ -116,7 +128,7 @@ async function proxyAgentWithin(
   });
   const discovered = proxyAgentFor(url, config).then(
     (agent) => ({ agent }),
-    () => ({ agent: undefined })
+    (error: unknown) => (error instanceof InvalidNpmProxyError ? null : { agent: undefined })
   );
   try {
     return await Promise.race([discovered, timedOut]);
