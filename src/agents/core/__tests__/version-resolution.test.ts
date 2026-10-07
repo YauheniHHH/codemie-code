@@ -136,7 +136,7 @@ describe('resolveSupportedVersionDetailed', () => {
 
     await expect(
       resolveSupportedVersionDetailed({ ...input, minimumSupportedVersion: '0.143.0' })
-    ).resolves.toEqual({ version: '0.154.0', isCurrent: false });
+    ).resolves.toEqual({ version: '0.154.0', isCurrent: false, liveBelowMinimum: true });
   });
 
   it('is live when the registry latest equals the minimum', async () => {
@@ -214,5 +214,14 @@ describe('resolveSupportedInstallVersion', () => {
     getCachedLatestVersion.mockResolvedValue(null);
 
     await expect(resolveSupportedInstallVersion(input)).resolves.toBe('latest');
+  });
+
+  it('installs the minimum, not the latest channel, when the registry latest is below it', async () => {
+    // `latest` would resolve to the same lagging release the minimum gate then refuses to launch.
+    getCachedLatestVersion.mockResolvedValue('0.140.0');
+
+    await expect(
+      resolveSupportedInstallVersion({ ...input, minimumSupportedVersion: '0.143.0' })
+    ).resolves.toBe('0.143.0');
   });
 });

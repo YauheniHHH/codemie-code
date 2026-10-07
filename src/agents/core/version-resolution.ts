@@ -90,6 +90,12 @@ export interface ResolvedSupportedVersion {
    * callers must then behave as if no supported version were configured.
    */
   isCurrent: boolean;
+  /**
+   * Set only when a live-tracked agent's registry `latest` is below its hard minimum (e.g. a
+   * lagging mirror). The install target is then the minimum rather than the `latest` channel,
+   * which would resolve to that same refused release.
+   */
+  liveBelowMinimum?: true;
 }
 
 /**
@@ -132,7 +138,7 @@ export async function resolveSupportedVersionDetailed(
         live: extracted,
         minimumSupportedVersion,
       });
-      return fallback;
+      return { ...fallback, liveBelowMinimum: true };
     }
     return extracted ? { version: extracted, isCurrent: true } : fallback;
   } catch (error) {
@@ -143,10 +149,15 @@ export async function resolveSupportedVersionDetailed(
 
 /**
  * Install target for `installVersion('supported')`: the current tracked version, or the `latest`
- * channel when it is unknown (checks off, lookup failed). Never a stale fallback, which can be far
- * behind upstream and would install — or downgrade to — an old release.
+ * channel when it is unknown (checks off, lookup failed). When the registry `latest` is below the
+ * hard minimum, the minimum itself, since `latest` would install the release the minimum gate
+ * refuses. Never a stale fallback, which can be far behind upstream and would install — or
+ * downgrade to — an old release.
  */
 export async function resolveSupportedInstallVersion(input: ResolveSupportedVersionInput): Promise<string> {
-  const { version, isCurrent } = await resolveSupportedVersionDetailed(input);
+  const { version, isCurrent, liveBelowMinimum } = await resolveSupportedVersionDetailed(input);
+  if (liveBelowMinimum && input.minimumSupportedVersion) {
+    return input.minimumSupportedVersion;
+  }
   return isCurrent && version ? version : 'latest';
 }
